@@ -63,15 +63,22 @@ export function normaliseWorkspace(raw: unknown): Workspace {
   const layout = (o.layout ?? {}) as Partial<Workspace['layout']>;
   return {
     schema: WORKSPACE_SCHEMA,
-    meta: merge({ ...base.meta, name: 'Imported workspace', createdAt: now, updatedAt: now, appVersion: APP_VERSION }, o.meta),
+    meta: ((mt) => (mt.factoryId === 'SB1' ? { ...mt, factoryId: 'F4', factoryName: base.meta.factoryName } : mt))(
+      merge({ ...base.meta, name: 'Imported workspace', createdAt: now, updatedAt: now, appVersion: APP_VERSION }, o.meta),
+    ),
     settings: merge(defaultSettings(), o.settings),
     cells: arr(o.cells),
-    zones: arr(o.zones),
+    zones: arr<Record<string, unknown>>(o.zones).map((z) => ({ pos: null, futurePos: null, maxCrewPerLevel: null, ...z })) as unknown as Workspace['zones'],
     fpds: arr(o.fpds),
     components: arr(o.components),
-    resources: arr(o.resources),
+    resources: arr<Record<string, unknown>>(o.resources).map((r) => ({
+      footprintLM: null, footprintWM: null, utilities: [],
+      // v1.0 files carried a two-state Tooling Class; map it onto the 1–3 scoring matrix.
+      complexity: Array.isArray(r.complexity) ? r.complexity : r.toolingClass === 'Complex' ? [3, 3, 2, 2] : [1, 1, 1, 1],
+      ...r,
+    })) as unknown as Workspace['resources'],
     rows: arr<Partial<BopRow>>(o.rows).map(normRow),
-    pfmea: arr(o.pfmea),
+    pfmea: arr<Record<string, unknown>>(o.pfmea).map((x) => ({ controlDocForced: false, controlDocRef: '', resourceIds: [], ...x })) as unknown as Workspace['pfmea'],
     holdPoints: arr(o.holdPoints),
     assumptions: arr(o.assumptions),
     gateSignoffs: (o.gateSignoffs && typeof o.gateSignoffs === 'object' ? o.gateSignoffs : {}) as Workspace['gateSignoffs'],

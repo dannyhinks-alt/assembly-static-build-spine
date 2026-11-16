@@ -3,7 +3,7 @@ import { blankResource, blankRow } from '../data/seed';
 import type { Model } from '../engine/model';
 import { leavesOf } from '../engine/model';
 import type { ActionType, BopRow, Classification, Component, Fpd, PfmeaItem, Resource, ResourceKind, Workspace } from '../types';
-import { ACTION_TYPES, FLOOR_LEVELS, RESOURCE_KINDS, uid } from '../types';
+import { ACTION_TYPES, FLOOR_LEVELS, RESOURCE_KINDS, complexityOf, uid } from '../types';
 import { num } from './format';
 
 type Row = Record<string, unknown>;
@@ -164,7 +164,15 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
     x.tareKg = nOrNull(col(r, 'Tare (kg)', 'Tare')) ?? x.tareKg;
     x.tiers = nOrNull(col(r, 'Tiers')) ?? x.tiers;
     x.tierHeightM = nOrNull(col(r, 'Tier Height (m)', 'Tier Height')) ?? x.tierHeightM;
-    if (/complex/i.test(str(col(r, 'Tooling Class', 'Class')))) x.toolingClass = 'Complex';
+    const scores = ['Cx Technical', 'Cx Skill', 'Cx Set-Up', 'Cx Upkeep'].map((h) => str(col(r, h)));
+    const cls = str(col(r, 'Complexity', 'Tooling Class', 'Class'));
+    if (scores.some((v) => v !== '')) x.complexity = scores.map((v, i) => (v === '' ? x.complexity[i] ?? 1 : Math.min(3, Math.max(1, Math.round(num(v, 1))))));
+    else if (/complex/i.test(cls)) x.complexity = [3, 3, 2, 2];
+    else if (/medium/i.test(cls)) x.complexity = [2, 2, 2, 2];
+    else if (/simple|standard/i.test(cls)) x.complexity = [1, 1, 1, 1];
+    x.footprintLM = nOrNull(col(r, 'Footprint L (m)', 'Footprint Length')) ?? x.footprintLM;
+    x.footprintWM = nOrNull(col(r, 'Footprint W (m)', 'Footprint Width')) ?? x.footprintWM;
+    if (str(col(r, 'Utilities', 'Utility Services'))) x.utilities = list(col(r, 'Utilities', 'Utility Services'));
     if (/full/i.test(str(col(r, 'Dwell Mode', 'Dwell')))) x.dwellMode = 'Full-Build';
   }
 
@@ -255,7 +263,7 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       const code = str(col(r, 'FPD Code', 'FPD'));
       let p = ws.pfmea.find((x) => x.opId === op && x.failureMode.toLowerCase() === fm.toLowerCase());
       if (!p) {
-        p = { id: uid('pf'), fpdId: '', opId: op, failureMode: fm, effect: '', cause: '', controls: '', s: 1, o: 1, d: 1, recommendedAction: '', owner: '', status: 'Open' };
+        p = { id: uid('pf'), fpdId: '', opId: op, failureMode: fm, effect: '', cause: '', controls: '', s: 1, o: 1, d: 1, recommendedAction: '', owner: '', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: [] };
         ws.pfmea.push(p);
         c.added++;
       } else c.updated++;
@@ -265,6 +273,10 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
         controls: str(col(r, 'Controls', 'Current Controls')) || p.controls, s: sod(col(r, 'S', 'Severity')), o: sod(col(r, 'O', 'Occurrence')), d: sod(col(r, 'D', 'Detection')),
         recommendedAction: str(col(r, 'Recommended Action', 'Action')) || p.recommendedAction, owner: str(col(r, 'Owner')) || p.owner,
         status: /clos/i.test(st) ? 'Closed' : /progress/i.test(st) ? 'In Progress' : 'Open',
+        controlDocRef: str(col(r, 'Control Doc Ref', 'Control Document', 'Control Plan Ref')) || p.controlDocRef,
+        resourceIds: str(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling'))
+          ? list(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling')).map((n) => ws.resources.find((x) => x.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => !!x)
+          : p.resourceIds,
       };
       Object.assign(p, upd);
     }
@@ -306,9 +318,10 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
   sheet('Components', take(ws.components).map((c) => ({ 'BOM Ref': c.bomRef, Name: c.name, 'Weight (kg)': c.weightKg ?? '', 'Length (m)': c.lengthM ?? '', 'Width (m)': c.widthM ?? '', 'Height (m)': c.heightM ?? '', 'Qty per Build': c.qtyPerBuild })), [34, 30, 12, 11, 11, 11, 13]);
   sheet('Resources', take(ws.resources).map((r) => ({
     Kind: RESOURCE_KINDS.find((k) => k.kind === r.kind)!.label, Name: r.name, Qty: r.qty, Cell: cellNo(r.cellId), 'SWL (kg)': r.swlKg ?? '', 'Hook Height (m)': r.hookHeightM ?? '',
-    'Headroom (m)': r.headroomM ?? '', 'Tare (kg)': r.tareKg ?? '', Tiers: r.tiers ?? '', 'Tier Height (m)': r.tierHeightM ?? '', 'Tooling Class': r.toolingClass, 'Dwell Mode': r.dwellMode,
-  })), [24, 38, 6, 6, 10, 15, 13, 10, 7, 15, 14, 12]);
-  sheet('PFMEA', take(ws.pfmea).map((p) => ({ 'FPD Code': fpd(p.fpdId), 'Op #': p.opId, 'Failure Mode': p.failureMode, Effect: p.effect, Cause: p.cause, Controls: p.controls, S: p.s, O: p.o, D: p.d, RPN: p.s * p.o * p.d, 'Recommended Action': p.recommendedAction, Owner: p.owner, Status: p.status })), [10, 10, 40, 40, 40, 40, 4, 4, 4, 6, 44, 24, 12]);
+    'Headroom (m)': r.headroomM ?? '', 'Tare (kg)': r.tareKg ?? '', Tiers: r.tiers ?? '', 'Tier Height (m)': r.tierHeightM ?? '', Complexity: complexityOf(r), 'Cx Technical': r.complexity[0], 'Cx Skill': r.complexity[1], 'Cx Set-Up': r.complexity[2], 'Cx Upkeep': r.complexity[3],
+    'Footprint L (m)': r.footprintLM ?? '', 'Footprint W (m)': r.footprintWM ?? '', Utilities: r.utilities.join('; '), 'Dwell Mode': r.dwellMode,
+  })), [24, 38, 6, 6, 10, 15, 13, 10, 7, 15, 11, 12, 9, 10, 10, 14, 14, 44, 12]);
+  sheet('PFMEA', take(ws.pfmea).map((p) => ({ 'FPD Code': fpd(p.fpdId), 'Op #': p.opId, 'Failure Mode': p.failureMode, Effect: p.effect, Cause: p.cause, Controls: p.controls, S: p.s, O: p.o, D: p.d, RPN: p.s * p.o * p.d, 'Recommended Action': p.recommendedAction, Owner: p.owner, Status: p.status, 'Control Doc Ref': p.controlDocRef, 'Assigned Resources': names(p.resourceIds) })), [10, 10, 40, 40, 40, 40, 4, 4, 4, 6, 44, 24, 12, 28, 40]);
 
   if (!template) {
     const t = m.totals;

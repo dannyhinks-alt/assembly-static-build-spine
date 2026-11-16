@@ -1,14 +1,16 @@
 import { Fragment, useMemo, useState } from 'react';
-import { Card, Empty, HowItWorks, Kpi, Pill, RagBadge, Select, Th, Tip } from '../components/primitives';
+import { Card, Empty, HowItWorks, Kpi, Meter, Pill, RagBadge, Select, Th, Tip } from '../components/primitives';
+import { CLASH_LABEL } from '../engine/space';
 import { isBlock, type CpmNode } from '../engine/model';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
+import { FLOOR_LEVELS } from '../types';
 import { useStore } from '../store';
 import { CpmBadge } from './Tab2Bop';
 
 const INK = '#0f172a';
 const BAR = '#94a3b8';
 
-export default function Tab7Cpm() {
+export default function Tab6Labour() {
   const { ws, model: m, scope, setTab } = useStore();
   const [unit, setUnit] = useState<'d' | 'h'>('d');
   const [show, setShow] = useState<'all' | 'critical' | 'near'>('all');
@@ -32,19 +34,29 @@ export default function Tab7Cpm() {
   const tipNode = tip ? m.cpm.nodes.get(tip.id) : undefined;
   const tipRow = tip ? byId.get(tip.id) : undefined;
   const LABEL = 300;
+  const established = ws.cells.reduce((a, c) => a + c.crewPerShift, 0);
+  const prof = m.space.crewProfile;
+  const yMax = Math.max(m.peakCrew, established, 1) * 1.15;
+  const CW = 1000, CH = 170, PL = 34, PB = 22, PT = 8;
+  const px = (h: number) => PL + (h / maxHrs) * (CW - PL - 6);
+  const py = (c: number) => PT + (1 - c / yMax) * (CH - PT - PB);
+  const stepPath = prof.length ? `M${px(prof[0].t)},${py(0)} ` + prof.map((p, i) => `L${px(p.t)},${py(p.crew)} L${px(prof[i + 1]?.t ?? p.t)},${py(p.crew)}`).join(' ') + ` L${px(prof[prof.length - 1].t)},${py(0)} Z` : '';
+  const zoneName = (id: string) => ws.zones.find((z) => z.id === id)?.name ?? '—';
+  const cellNo = (id: string) => ws.cells.find((c) => c.id === id)?.number ?? '—';
+  const clashes = m.space.clashes;
 
   return (
     <div>
       <HowItWorks
-        tab="7"
-        title="CPM Schedule & Critical Path"
+        tab="6"
+        title="Labour Load & Spatial Balancing"
         steps={[
-          'The engine builds a network from Tab 2: explicit Predecessor # links, plus an automatic link from each Sequential row to the row above it in its FPD.',
-          'A forward pass gives Early Start / Finish; a backward pass gives Late Start / Finish and Float. Durations are Elapsed Bay Durations for the selected build #.',
-          'Dark bars are critical (zero float). Lighter bars have float, drawn as a thin tail showing how far they can slip.',
-          'The dashed line is the Max Production Window for the active demand case. A critical path beyond it means builds overlap and need concurrent positions.',
-          'Filtering to one FPD or cell schedules only those rows; links to FPDs outside the filter are ignored and counted below.',
-          'Use float to resolve the resource conflicts listed in Tab 8 before adding equipment.',
+          'CPM forward pass gives Early Start / Finish; the backward pass gives Late Start / Finish and Float. Durations are Elapsed Bay Durations for the selected build #.',
+          'Dark Gantt bars are critical (zero float); lighter bars have float, drawn as a thin tail. The dashed line is the Max Production Window.',
+          'The Crew Histogram sums crew sizes over the early-start schedule and compares the peak with the established crew per shift.',
+          'Spatial Conflict detection locates every activity by Cell, Zone and Stand Floor Level and looks for work-face congestion, lifts into an occupied work face and lifts over or under an occupied level.',
+          'Each conflict shows whether delaying one activity inside its float would clear it. Apply the delay by adding a predecessor in Tab 2.',
+          'Labour utilisation by cell books hours to the destination zone of each activity against the crew set in Tab 1.',
         ]}
       />
 
@@ -54,7 +66,7 @@ export default function Tab7Cpm() {
         <Kpi label="Drumbeat margin" guide="kpiDrumbeat" value={fmt(margin, 1)} unit="months" sub={`Requirement ${fmt(ws.settings.programme.drumbeatMonths, 1)} months`} rag={margin < 0 ? 'red' : 'green'} />
         <Kpi label="Concurrent builds in WIP" guide="kpiConcurrent" value={fmtInt(m.concurrentBuilds)} sub={m.concurrentBuilds > 1 ? 'Builds overlap — duplicate Full-Build stands' : 'One build position is sufficient'} rag={m.concurrentBuilds > 1 ? 'amber' : 'green'} />
         <Kpi label="Critical operations" guide="badgeCritical" value={`${fmtInt(criticalChain.length)} of ${fmtInt(nodes.length)}`} sub={`${fmtInt(nodes.filter((n) => !n.critical && n.float <= near && n.dur > 0).length)} near-critical (float ≤ ${near} h)`} />
-        <Kpi label="Peak concurrent crew" guide="kpiPeakCrew" value={fmtInt(m.peakCrew)} sub="On the early-start schedule" />
+        <Kpi label="Peak concurrent crew" guide="kpiPeakCrew" value={fmtInt(m.peakCrew)} sub={`${fmtInt(established)} established per shift`} rag={m.peakCrew > established ? 'amber' : 'green'} />
       </div>
 
       {m.cpm.hasCycle && (
@@ -98,7 +110,7 @@ export default function Tab7Cpm() {
               {windowHrs > 0 && (
                 <div className="pointer-events-none absolute bottom-0 top-0 z-30" style={{ left: LABEL, right: 0 }}>
                   <div className="absolute bottom-0 top-7 border-l-2 border-dashed border-slate-700" style={{ left: pct(windowHrs) }}>
-                    <span className="absolute left-1 top-0.5 whitespace-nowrap rounded border border-slate-300 bg-white px-1 text-[10.5px] font-medium text-slate-700">Window {fmt(m.windowActive, 1)} mo</span>
+                    <span className={`absolute top-0.5 whitespace-nowrap rounded border border-slate-300 bg-white px-1 text-[10.5px] font-medium text-slate-700 ${windowHrs / maxHrs > 0.85 ? '-left-1.5 -translate-x-full' : 'left-1'}`}>Window {fmt(m.windowActive, 1)} mo</span>
                   </div>
                 </div>
               )}
@@ -147,6 +159,73 @@ export default function Tab7Cpm() {
             </dl>
           </div>
         )}
+      </Card>
+
+      <Card className="mt-4" title="Crew Histogram — Early-Start Schedule" guide="crewHistogram"
+        right={<span className="flex flex-wrap items-center gap-3 text-[11.5px] text-slate-600"><span className="flex items-center gap-1"><span className="inline-block h-2.5 w-5 rounded-sm bg-slate-400" />Crew working</span><span className="flex items-center gap-1"><span className="inline-block h-0 w-5 border-t-2 border-dashed border-slate-800" />Established crew / shift ({established})</span></span>}>
+        {prof.length === 0 ? <Empty>No scheduled work in the current Spine Filter.</Empty> : (
+          <svg viewBox={`0 0 ${CW} ${CH}`} className="w-full" role="img" aria-label="Crew histogram over the build">
+            {[0, 0.5, 1].map((f) => { const v = Math.round((yMax / 1.15) * f); return (<g key={f}><line x1={PL} x2={CW - 6} y1={py(v)} y2={py(v)} stroke="#e2e8f0" /><text x={PL - 5} y={py(v) + 3.5} fontSize={11} textAnchor="end" fill="#64748b">{v}</text></g>); })}
+            {Array.from({ length: months + 1 }, (_, i) => i).filter((i) => i * hpm <= maxHrs * 0.985).map((i) => <text key={i} x={px(i * hpm)} y={CH - 6} fontSize={11} textAnchor="middle" fill="#64748b">{i === 0 ? '0' : `${i} mo`}</text>)}
+            <path d={stepPath} fill="#94a3b8" fillOpacity={0.55} stroke="#475569" strokeWidth={1.5} strokeLinejoin="round" />
+            <line x1={PL} x2={CW - 6} y1={py(established)} y2={py(established)} stroke="#0f172a" strokeWidth={1.5} strokeDasharray="6 4" />
+            {windowHrs > 0 && <line x1={px(windowHrs)} x2={px(windowHrs)} y1={PT} y2={CH - PB} stroke="#334155" strokeWidth={1.5} strokeDasharray="3 3" />}
+            {prof.map((p, i) => i + 1 < prof.length && (
+              <rect key={i} x={px(p.t)} y={PT} width={Math.max(0.5, px(prof[i + 1].t) - px(p.t))} height={CH - PT - PB} fill="transparent" className="hover:fill-slate-900/5">
+                <title>{`Day ${fmt(p.t / hpd, 1)} to ${fmt(prof[i + 1].t / hpd, 1)}: ${p.crew} crew working${p.crew > established ? ` — ${p.crew - established} above establishment` : ''}`}</title>
+              </rect>
+            ))}
+          </svg>
+        )}
+        <p className="mt-1 text-[11.5px] text-slate-500">Peak {fmtInt(m.peakCrew)} against {fmtInt(established)} established per shift. Hover the chart for the crew in each interval; the dotted vertical line is the production window.</p>
+      </Card>
+
+      <Card className="mt-4" title="Spatial Conflicts — Cell / Zone / Stand Level" guide="spaceClash" pad={false}
+        right={<RagBadge rag={clashes.some((c) => !c.resolvable && c.rag === 'serious') ? 'serious' : clashes.length ? 'amber' : 'green'} label={`${clashes.length} conflict(s) · ${clashes.filter((c) => !c.resolvable).length} not resolvable in float`} />}>
+        {clashes.length === 0 ? <div className="p-4"><Empty>No work-face congestion and no lift overlaps other work in the same zone.</Empty></div> : (
+          <div className="scroll-thin overflow-auto" style={{ maxHeight: 380 }}>
+            <table className="w-full min-w-max border-separate border-spacing-0">
+              <thead className="sticky top-0 z-10"><tr><Th guide="spaceClash">Conflict</Th><Th>Cell</Th><Th>Zone</Th><Th guide="floorLevel">Stand level</Th><Th guide="opId">Activities</Th><Th right guide="esEf">Window (day)</Th><Th right>Overlap h</Th><Th right guide="zoneCap">Crew / limit</Th><Th>RAG</Th><Th guide="resolvable">Resolvable within float</Th></tr></thead>
+              <tbody>
+                {clashes.map((c, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="td-ro whitespace-nowrap font-medium text-slate-900">{CLASH_LABEL[c.kind]}</td>
+                    <td className="td-ro whitespace-nowrap">Cell {cellNo(c.cellId)}</td>
+                    <td className="td-ro max-w-[220px] truncate text-slate-700">{zoneName(c.zoneId)}</td>
+                    <td className="td-ro whitespace-nowrap">{FLOOR_LEVELS[c.level]}{c.otherLevel != null && <span className="text-slate-500"> ↕ {FLOOR_LEVELS[c.otherLevel]}</span>}</td>
+                    <td className="td-ro font-mono text-[12px] text-slate-800">{c.ops.join(', ')}</td>
+                    <td className="td-ro whitespace-nowrap text-right">{fmt(c.start / hpd, 1)}–{fmt(c.end / hpd, 1)}</td>
+                    <td className="td-ro text-right">{fmt(c.overlapHrs, 1)}</td>
+                    <td className="td-ro text-right">{c.cap != null ? `${c.crew} / ${c.cap}` : c.crew}</td>
+                    <td className="td-ro"><RagBadge rag={c.rag} /></td>
+                    <td className="td-ro whitespace-nowrap">{c.resolvable ? <span className="flex items-center gap-1.5"><RagBadge rag="green" label="Yes" /><span className="text-slate-700">delay <span className="font-mono text-[12px]">{c.shiftOp}</span> by {fmt(c.shiftHrs, 1)} h</span></span> : <span className="flex items-center gap-1.5"><RagBadge rag="amber" label="No" /><span className="text-slate-700">{c.kind === 'congestion' ? 'stagger the work or review the limit' : 'plan exclusion windows per lift'}</span></span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[11.5px] text-slate-500">Resource double-booking (cranes, vehicles, rigs) is analysed separately in <button className="underline hover:text-slate-800" onClick={() => setTab(8)}>Tab 8</button>. Crew limits per level are set on each zone in <button className="underline hover:text-slate-800" onClick={() => setTab(1)}>Tab 1</button>.</div>
+      </Card>
+
+      <Card className="mt-4" title="Labour Load by Cell" guide="cellLoad" pad={false}>
+        <table className="w-full">
+          <thead><tr><Th>Cell</Th><Th right guide="cellCrew">Crew / shift</Th><Th right>Activities</Th><Th right guide="kpiLabour">Labour h / build</Th><Th right guide="kpiLifts">Lifts</Th><Th guide="cellUtil">Labour utilisation</Th><Th>Status</Th></tr></thead>
+          <tbody>
+            {[...ws.cells].sort((a, b) => a.number - b.number).map((c) => {
+              const l = m.cells.find((x) => x.cellId === c.id)!;
+              return (
+                <tr key={c.id} className="hover:bg-slate-50">
+                  <td className="td-ro"><b className="text-slate-900">Cell {c.number}</b> <span className="text-slate-600">{c.name}</span></td>
+                  <td className="td-ro text-right">{fmtInt(c.crewPerShift)}</td><td className="td-ro text-right">{fmtInt(l.rows)}</td>
+                  <td className="td-ro text-right font-medium text-slate-900">{fmtInt(l.labourHrs)}</td><td className="td-ro text-right">{fmtInt(l.lifts)}</td>
+                  <td className="td-ro" style={{ minWidth: 220 }}>{l.utilPct == null ? <span className="text-slate-400">no crew set</span> : <span className="flex items-center gap-2"><span className="w-11 text-right tabular-nums">{fmtPct(l.utilPct, 0)}</span><Meter pct={l.utilPct} rag={l.rag} ticks={[80, 100]} /></span>}</td>
+                  <td className="td-ro">{l.utilPct == null ? null : <RagBadge rag={l.rag} />}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </Card>
 
       <Card className="mt-4" title="Critical Path Sequence" guide="badgeCritical">

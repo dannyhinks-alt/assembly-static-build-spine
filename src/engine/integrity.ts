@@ -187,7 +187,7 @@ export function runIntegrity(ws: Workspace): IntegrityReport {
   const open = ws.assumptions.filter((a) => !a.confirmed);
   add('assumptions', 'All planning assumptions confirmed', open.length === 0,
     `${ws.assumptions.length} assumption(s) confirmed.`,
-    `${open.length} unconfirmed assumption(s) — review in Tab 9 › Assumptions Register.`);
+    `${open.length} unconfirmed assumption(s) — review in Tab 1 › Assumptions Register.`);
 
   const passed = checks.filter((c) => c.pass).length;
   return { checks, passed, allPass: passed === checks.length, factory };

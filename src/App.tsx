@@ -7,26 +7,43 @@ import { download, fileSafe, fsaSupported, stamp } from './lib/persistence';
 import { useStore } from './store';
 import Tab1Targets from './tabs/Tab1Targets';
 import Tab2Bop from './tabs/Tab2Bop';
-import Tab3Fpds from './tabs/Tab3Fpds';
-import Tab4Resources from './tabs/Tab4Resources';
-import Tab5Cells from './tabs/Tab5Cells';
-import Tab6Pfmea from './tabs/Tab6Pfmea';
-import Tab7Cpm from './tabs/Tab7Cpm';
-import Tab8Lifts from './tabs/Tab8Lifts';
-import Tab9Governance from './tabs/Tab9Governance';
+import Tab3Equipment from './tabs/Tab3Equipment';
+import Tab4Lifts from './tabs/Tab4Lifts';
+import Tab5Pfmea from './tabs/Tab5Pfmea';
+import Tab6Labour from './tabs/Tab6Labour';
+import Tab7Footprint from './tabs/Tab7Footprint';
+import Tab8Utilisation from './tabs/Tab8Utilisation';
+import Tab9Executive from './tabs/Tab9Executive';
 import { APP_VERSION, type ScopeMode } from './types';
 
 export const TABS: { n: number; label: string; short: string; group: 'input' | 'analysis' }[] = [
   { n: 1, label: 'Targets & Pre-Requisites', short: 'Targets', group: 'input' },
-  { n: 2, label: 'Bill of Process — KTP Spine', short: 'Bill of Process', group: 'input' },
-  { n: 3, label: 'FPD Registry & Components', short: 'FPDs & BOM', group: 'input' },
-  { n: 4, label: 'Equipment & Resource Registry', short: 'Resources', group: 'input' },
-  { n: 5, label: 'Cells, Zones & Crew', short: 'Cells & Crew', group: 'input' },
-  { n: 6, label: 'PFMEA & Quality Hold Points', short: 'PFMEA & Quality', group: 'input' },
-  { n: 7, label: 'CPM Schedule & Critical Path', short: 'CPM Schedule', group: 'analysis' },
-  { n: 8, label: 'Lift, Crane & Resource Load', short: 'Lifts & Load', group: 'analysis' },
-  { n: 9, label: 'Governance & Release Gates', short: 'Governance', group: 'analysis' },
+  { n: 2, label: 'Bill of Process', short: 'Bill of Process', group: 'input' },
+  { n: 3, label: 'Equipment, Tooling, Vehicles & Stands', short: 'Equipment', group: 'input' },
+  { n: 4, label: 'Component, Lift & Movement Analysis', short: 'Lift & Movement', group: 'input' },
+  { n: 5, label: 'Cell & Process PFMEA', short: 'PFMEA', group: 'input' },
+  { n: 6, label: 'Labour Load & Spatial Balancing', short: 'Labour & Spatial', group: 'input' },
+  { n: 7, label: 'Footprint, Space & Dual-View Layout', short: 'Footprint & Layout', group: 'analysis' },
+  { n: 8, label: 'Resource Utilisation & Concurrency', short: 'Utilisation', group: 'analysis' },
+  { n: 9, label: 'Executive Summary', short: 'Executive Summary', group: 'analysis' },
 ];
+export const OFFLINE_FILE_NAME = 'Assembly_Spine_v1.html';
+
+/**
+ * Rebuild the pristine single-file app from the running page: the inlined <script> and <style> are kept verbatim,
+ * the React root is emptied and anything React portalled into <body> is dropped. Works from file:// where fetch() cannot.
+ */
+export function offlineAppHtml(): string | null {
+  if (document.querySelector('script[src]') || document.querySelector('link[rel="stylesheet"]')) return null; // dev or chunked build
+  const doc = document.documentElement.cloneNode(true) as HTMLElement;
+  const body = doc.querySelector('body');
+  if (!body) return null;
+  for (const el of [...body.children]) {
+    if (el.id === 'root') el.innerHTML = '';
+    else if (el.tagName !== 'SCRIPT' && el.tagName !== 'STYLE') el.remove();
+  }
+  return `<!doctype html>\n${doc.outerHTML}\n`;
+}
 
 export default function App() {
   const st = useStore();
@@ -53,13 +70,13 @@ export default function App() {
       <main className="mx-auto max-w-[1680px] px-4 pb-16 pt-4">
         {tab === 1 && <Tab1Targets />}
         {tab === 2 && <Tab2Bop />}
-        {tab === 3 && <Tab3Fpds />}
-        {tab === 4 && <Tab4Resources />}
-        {tab === 5 && <Tab5Cells />}
-        {tab === 6 && <Tab6Pfmea />}
-        {tab === 7 && <Tab7Cpm />}
-        {tab === 8 && <Tab8Lifts />}
-        {tab === 9 && <Tab9Governance />}
+        {tab === 3 && <Tab3Equipment />}
+        {tab === 4 && <Tab4Lifts />}
+        {tab === 5 && <Tab5Pfmea />}
+        {tab === 6 && <Tab6Labour />}
+        {tab === 7 && <Tab7Footprint />}
+        {tab === 8 && <Tab8Utilisation />}
+        {tab === 9 && <Tab9Executive />}
       </main>
       <footer className="border-t border-slate-200 bg-white px-4 py-2 text-center text-[11px] text-slate-500">
         Assembly &amp; Static Build Central Spine v{APP_VERSION} · offline-first · no data leaves this device · en-GB
@@ -87,8 +104,20 @@ function TopBar() {
     setBusy(false);
   };
   const exportSummary = () => {
-    download(`${fileSafe(ws.meta.factoryId || 'factory')}_summary-V2_${stamp()}.json`, JSON.stringify(buildSummary(ws, st.integrity), null, 2));
+    download(`${fileSafe(ws.meta.factoryId || 'F4')}_summary-V2_${stamp()}.json`, JSON.stringify(buildSummary(ws, st.integrity), null, 2));
     st.toast('ok', 'summary@V2 exported (whole factory, all active FPDs) — import it into Master Control Hub.');
+  };
+  const downloadOffline = async () => {
+    setMenu(false);
+    let html = offlineAppHtml();
+    if (!html && /^https?:$/.test(location.protocol)) {
+      // Chunked or dev build: the page is not self-contained, so there is nothing complete to hand over.
+      st.toast('warn', 'This copy is not the single-file build, so it cannot be saved as one file. Use Assembly_Spine_v1.html from the repository, or run "npm run build".');
+      return;
+    }
+    if (!html) { st.toast('error', 'Could not assemble the offline file from this page.'); return; }
+    download(OFFLINE_FILE_NAME, new Blob([html], { type: 'text/html;charset=utf-8' }), 'text/html');
+    st.toast('ok', `${OFFLINE_FILE_NAME} saved (${(html.length / 1024 / 1024).toFixed(1)} MB). It runs with no internet connection. Your workspace is not inside it — use Export JSON to move data.`);
   };
   const exportXlsx = async (template: boolean) => {
     setMenu(false);
@@ -111,14 +140,14 @@ function TopBar() {
         <div className="leading-tight">
           <div className="text-[13.5px] font-semibold text-slate-900">Assembly &amp; Static Build Central Spine <span className="font-normal text-slate-500">v{APP_VERSION}</span></div>
           <div className="flex items-center gap-1.5 text-[11.5px] text-slate-500">
-            <span className="w-[300px]"><TextInput cell value={ws.meta.name} onChange={(v) => st.mutate((d) => { d.meta.name = v || 'Untitled workspace'; })} ariaLabel="Workspace name" className="!py-0 !text-[11.5px] text-slate-600" /></span>
+            <span className="w-[230px]"><TextInput cell value={ws.meta.name} onChange={(v) => st.mutate((d) => { d.meta.name = v || 'Untitled workspace'; })} ariaLabel="Workspace name" className="!py-0 !text-[11.5px] text-slate-600" /></span>
           </div>
         </div>
       </div>
 
       <div className="ml-auto flex flex-wrap items-center gap-1.5">
-        <button className="btn-ghost" onClick={st.undo} disabled={!st.canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button className="btn-ghost" onClick={st.redo} disabled={!st.canRedo} title="Redo (Ctrl+Y)">↷ Redo</button>
+        <button className="btn-ghost" onClick={st.undo} disabled={!st.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶ Undo</button>
+        <button className="btn-ghost" onClick={st.redo} disabled={!st.canRedo} title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
         <span className="mx-1 h-5 w-px bg-slate-200" />
         <input ref={xlsxRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={(e) => { void onXlsx(e.target.files?.[0]); e.target.value = ''; }} />
         <button className="btn" onClick={() => xlsxRef.current?.click()} disabled={busy}>{busy ? 'Reading…' : 'Import Excel (.xlsx)'}</button>
@@ -143,12 +172,18 @@ function TopBar() {
           <button className="btn-primary" onClick={exportSummary}>Export summary@V2 for Master Hub</button>
           <Tip id="summaryExport" />
         </div>
+        <div className="inline-flex items-center gap-1.5">
+          <button className="btn" onClick={() => void downloadOffline()} title={`Save the whole application as one self-contained file, ${OFFLINE_FILE_NAME}`}>⤓ Download Offline App (.html)</button>
+          <Tip id="downloadOffline" />
+        </div>
         <div className="relative">
           <button className="btn" onClick={() => setMenu((m) => !m)} aria-haspopup="menu" aria-expanded={menu}>More ▾</button>
           {menu && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
               <div role="menu" className="card absolute right-0 z-50 mt-1 w-64 py-1 text-[12.5px]">
+                <MenuItem onClick={() => void downloadOffline()}>Download Offline App (.html)</MenuItem>
+                <div className="my-1 border-t border-slate-100" />
                 <MenuItem onClick={() => void exportXlsx(false)}>Export Excel workbook (.xlsx)</MenuItem>
                 <MenuItem onClick={() => void exportXlsx(true)}>Download Excel import template</MenuItem>
                 {fsaSupported() && <MenuItem onClick={() => { setMenu(false); void st.openFile(); }}>Open &amp; link existing .json file…</MenuItem>}
@@ -220,14 +255,14 @@ function TabNav() {
   const group = (g: 'input' | 'analysis', title: string, range: string) => (
     <div className="flex items-center gap-1.5">
       <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${g === 'input' ? 'bg-slate-200 text-slate-700' : 'bg-slate-800 text-white'}`}>{title} <span className="opacity-70">[{range}]</span></span>
-      <div className="flex">
+      <div className="flex flex-wrap">
         {TABS.filter((t) => t.group === g).map((t) => (
           <button
             key={t.n}
             onClick={() => setTab(t.n)}
             title={t.label}
             aria-current={tab === t.n ? 'page' : undefined}
-            className={`-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-[12.5px] font-medium ${tab === t.n ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'}`}
+            className={`-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2 py-2 text-[12.5px] font-medium ${tab === t.n ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'}`}
           >
             <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded text-[10.5px] font-bold tabular-nums ${tab === t.n ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}>{t.n}</span>
             {t.short}
@@ -239,7 +274,7 @@ function TabNav() {
   );
   return (
     <nav className="border-t border-slate-100">
-      <div className="scroll-thin mx-auto flex max-w-[1680px] items-center gap-5 overflow-x-auto px-4">
+      <div className="mx-auto flex max-w-[1680px] flex-wrap items-center gap-x-4 gap-y-0 px-4">
         {group('input', 'Input Spine', '1–6')}
         <span className="h-5 w-px shrink-0 bg-slate-200" />
         {group('analysis', 'Analysis & Governance', '7–9')}

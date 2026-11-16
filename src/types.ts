@@ -30,6 +30,12 @@ export interface Zone {
   id: Id;
   cellId: Id;
   name: string;
+  /** Station point on the floor plan (m). Falls back to the cell shape centroid. */
+  pos: Pt | null;
+  /** Proposed future-state station point (m); null = unchanged. */
+  futurePos: Pt | null;
+  /** Maximum crew that can work safely on one stand floor level of this zone at once. */
+  maxCrewPerLevel: number | null;
 }
 
 export interface Component {
@@ -53,7 +59,17 @@ export const RESOURCE_KINDS: { kind: ResourceKind; label: string; plural: string
   { kind: 'stand', label: 'Build / Storage Stand', plural: 'Build & Storage Stands', field: 'standIds' },
 ];
 export type ResourceField = 'rigIds' | 'craneIds' | 'riggingIds' | 'vehicleIds' | 'standIds';
-export type ToolingClass = 'Standard' | 'Complex';
+export type Complexity = 'Simple' | 'Medium' | 'Complex';
+/** 1–3 Complexity Scoring Matrix: four criteria, each scored 1 (low) to 3 (high). */
+export const COMPLEXITY_CRITERIA: { label: string; levels: [string, string, string] }[] = [
+  { label: 'Technical / Controls', levels: ['Passive or manual', 'Powered, simple controls', 'Programmed, multi-axis or interlocked'] },
+  { label: 'Operator Skill & Certification', levels: ['General operative', 'Trained and authorised', 'Certified specialist'] },
+  { label: 'Set-Up & Changeover', levels: ['Ready to use', 'Adjust and verify', 'Configure, prove out and sign off'] },
+  { label: 'Upkeep, Calibration & Statutory Exam', levels: ['Visual check', 'Periodic calibration or exam', 'Frequent calibration and thorough examination'] },
+];
+export const UTILITY_SERVICES = [
+  '415 V 3-phase', '230 V single-phase', 'Compressed air', 'Argon / shield gas', 'Helium', 'Demineralised water', 'Extraction (LEV)', 'Data / network', 'Hydraulic power',
+] as const;
 export type DwellMode = 'Per-Op' | 'Full-Build';
 
 export interface Resource {
@@ -73,10 +89,23 @@ export interface Resource {
   /** Stands: number of floors and height of each floor. */
   tiers: number | null;
   tierHeightM: number | null;
-  toolingClass: ToolingClass;
+  /** Four 1–3 scores, in COMPLEXITY_CRITERIA order. */
+  complexity: number[];
+  /** Floor claim of one unit (m). */
+  footprintLM: number | null;
+  footprintWM: number | null;
+  utilities: string[];
   dwellMode: DwellMode;
   notes: string;
 }
+export const complexityScore = (r: Pick<Resource, 'complexity'>): number =>
+  COMPLEXITY_CRITERIA.reduce((a, _c, i) => a + Math.min(3, Math.max(1, Math.round(r.complexity?.[i] ?? 1))), 0);
+/** 4–6 Simple · 7–9 Medium · 10–12 Complex */
+export const complexityOf = (r: Pick<Resource, 'complexity'>): Complexity => {
+  const s = complexityScore(r);
+  return s <= 6 ? 'Simple' : s <= 9 ? 'Medium' : 'Complex';
+};
+export const floorClaimM2 = (r: Resource): number => (r.footprintLM ?? 0) * (r.footprintWM ?? 0) * Math.max(1, r.qty);
 
 // ---------- Bill of Process ----------
 export type TaskType = 'Sequential' | 'Parallel';
@@ -146,6 +175,11 @@ export interface PfmeaItem {
   recommendedAction: string;
   owner: string;
   status: PfmeaStatus;
+  /** Manually require a control document even when the automatic rule does not. */
+  controlDocForced: boolean;
+  controlDocRef: string;
+  /** Assigned tooling / rig / vehicle / stand (resource ids). */
+  resourceIds: Id[];
 }
 
 export type HoldPointType = 'Hold' | 'Witness' | 'Review';
@@ -247,6 +281,7 @@ export interface Settings {
     rpnAmber: number;
     rpnSerious: number;
     rpnRed: number;
+    blindSpotSeverity: number;
   };
 }
 

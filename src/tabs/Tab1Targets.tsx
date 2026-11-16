@@ -1,5 +1,6 @@
 import type { Draft } from 'immer';
 import type { ReactNode } from 'react';
+import { AssumptionsCard, CellsZonesCards } from '../components/CellsZones';
 import LayoutEditor from '../components/LayoutEditor';
 import { Card, Field, HowItWorks, NumInput, PassBadge, RagBadge, Select, Tip } from '../components/primitives';
 import type { GuideId } from '../data/guides';
@@ -38,9 +39,9 @@ export default function Tab1Targets() {
           'Set programme cadence first: demand and waste give the Max Production Window every build has to fit inside.',
           'Pick a Build # on the learning curve — every labour hour and bay duration in all nine tabs rescales immediately.',
           'Enter the shift calendar and Active Time Factor; these convert BOP hours into working days and months.',
-          'Set the crane envelope and the four lift-risk thresholds; each lift row in Tab 2 is tested against them.',
-          'Import or trace the floor layout so cell and stand areas are recorded against the factory boundary.',
-          'Watch the 10-point integrity panel: it re-checks the whole model on every edit and must be all green before release.',
+          'Set the crane envelope and the lift-risk thresholds; every lift in Tab 4 is tested against them.',
+          'Define cells, crew, zones and zone station points, then import or trace the floor layout. Tabs 6 and 7 use them for spatial balancing and spaghetti distance.',
+          'Watch the 10-point integrity panel and keep the Assumptions Register confirmed: both must be clear before release in Tab 9.',
         ]}
       />
 
@@ -184,6 +185,9 @@ export default function Tab1Targets() {
           </div>
         </Card>
       </div>
+
+      <AssumptionsCard className="mt-4" />
+      <CellsZonesCards />
 
       <Card className="mt-4" title="Factory Physical Envelope & Propel Geometry">
         <div className="mb-3 flex flex-wrap items-end gap-3">

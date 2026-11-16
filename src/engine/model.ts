@@ -1,7 +1,8 @@
 // Core calculation engine: row maths, CPM schedule, lift register, resource loading.
 // Pure functions only — no React, no DOM — so the same code runs in tests and the UI.
 import type { BopRow, Classification, Fpd, Id, Rag, Resource, ResourceField, Scope, Settings, Workspace } from '../types';
-import { RESOURCE_KINDS } from '../types';
+import { RESOURCE_KINDS, complexityOf } from '../types';
+import { buildSpace, type SpaceResult } from './space';
 import { worstRag } from '../lib/format';
 
 const EPS = 1e-6;
@@ -301,11 +302,20 @@ export interface LiftRecord {
   availableHookM: number;
   hookMarginM: number;
   hookBreach: boolean;
+  compHeightM: number;
+  headroomM: number;
+  clearanceM: number;
+  zoneId: Id;
+  craneIds: Id[];
+  standIds: Id[];
   crew: number;
   heavy: boolean;
   multiPerson: boolean;
   highElevation: boolean;
+  /** Any Complex-class rig, crane, rigging item or stand is tagged. */
   complex: boolean;
+  /** Tandem cranes, or rigging / tool items at or above the threshold. */
+  multiTool: boolean;
   flagCount: number;
   rag: Rag;
   startHrs: number;
@@ -361,8 +371,9 @@ export function liftRecord(lc: LeafCalc, ws: Workspace): LiftRecord | null {
   const multiPerson = l.crewSize >= t.multiPersonCrew;
   const highElevation = elevationM >= t.highElevationM || l.floorLevel >= t.highElevationFloors;
   const toolItems = rigging.length + rigs.length;
-  const complex = tandem || toolItems >= t.multiToolItems || [...rigging, ...rigs, ...cranes].some((r) => r.toolingClass === 'Complex');
-  const flagCount = [heavy, multiPerson, highElevation, complex].filter(Boolean).length;
+  const multiTool = tandem || toolItems >= t.multiToolItems;
+  const complex = [...rigging, ...rigs, ...cranes, ...stands].some((r) => complexityOf(r) === 'Complex');
+  const flagCount = [heavy, multiPerson, highElevation, complex, multiTool].filter(Boolean).length;
 
   let rag: Rag = flagCount >= 3 ? 'serious' : flagCount >= 1 ? 'amber' : 'green';
   if (utilPct != null && utilPct > 90) rag = worstRag([rag, 'serious']);
@@ -371,8 +382,9 @@ export function liftRecord(lc: LeafCalc, ws: Workspace): LiftRecord | null {
   return {
     rowId: lc.parentId, leafId: l.id, fpdId: l.fpdId, opId: l.opId, description: l.description, lifts: l.liftCount,
     loadKg, missingWeight, capacityKg, capacitySource, utilPct, tandem, elevationM, floorLevel: l.floorLevel,
-    requiredHookM, availableHookM, hookMarginM, hookBreach, crew: l.crewSize,
-    heavy, multiPerson, highElevation, complex, flagCount, rag, startHrs: lc.startHrs,
+    requiredHookM, availableHookM, hookMarginM, hookBreach, compHeightM: compH, headroomM: headroom, clearanceM: s.crane.clearanceMarginM,
+    zoneId: l.destZoneId, craneIds: l.craneIds, standIds: l.standIds, crew: l.crewSize,
+    heavy, multiPerson, highElevation, complex, multiTool, flagCount, rag, startHrs: lc.startHrs,
   };
 }
 
@@ -380,6 +392,12 @@ export function liftRecord(lc: LeafCalc, ws: Workspace): LiftRecord | null {
 export interface ResourceLoad {
   resource: Resource;
   busyHrs: number;
+  /** Shifts the resource is occupied per build. */
+  shiftsUsed: number;
+  /** Shifts available in the programme window (all units). */
+  programmeShifts: number;
+  /** Over the Serious duty limit, or over-subscribed by operations that genuinely hold it. */
+  highRisk: boolean;
   opCount: number;
   ops: string[];
   dutyPct: number;
@@ -455,6 +473,7 @@ export interface Model {
   cells: CellLoad[];
   fpdRoll: FpdRoll[];
   peakCrew: number;
+  space: SpaceResult;
   scheduleRag: Rag;
   windowRatio: number;
   concurrentBuilds: number;
@@ -518,12 +537,16 @@ export function buildModel(ws: Workspace, scope: Scope): Model {
   // Resource loading
   const resources: ResourceLoad[] = [];
   const conflicts: Conflict[] = [];
-  const annualPerUnit = cal.annualHrs;
+  // Duty Cycle % = Shifts Used ÷ Programme Shifts, where the programme is the Max Production Window for one unit.
+  const hps = Math.max(0.01, s.calendar.hoursPerShift);
+  const windowShifts = Number.isFinite(windowActive) && windowActive > 0
+    ? windowActive * cal.daysPerMonth * s.calendar.shiftsPerDay
+    : 0;
   for (const r of ws.resources) {
     const field = RESOURCE_KINDS.find((k) => k.kind === r.kind)!.field as ResourceField;
     const users = leaves.filter((l) => l.leaf[field].includes(r.id));
     if (users.length === 0) {
-      resources.push({ resource: r, busyHrs: 0, opCount: 0, ops: [], dutyPct: 0, peakConcurrent: 0, rag: 'green', requiredQty: 0, conflicts: 0 });
+      resources.push({ resource: r, busyHrs: 0, shiftsUsed: 0, programmeShifts: windowShifts * Math.max(1, r.qty), highRisk: false, opCount: 0, ops: [], dutyPct: 0, peakConcurrent: 0, rag: 'green', requiredQty: 0, conflicts: 0 });
       continue;
     }
     const qty = Math.max(1, r.qty);
@@ -536,7 +559,10 @@ export function buildModel(ws: Workspace, scope: Scope): Model {
             ? Math.min(u.elapsedHrs, (u.leaf.liftCount * s.crane.avgLiftCycleHrs * lc) / cal.activeFactor)
             : u.elapsedHrs;
       }
-    const dutyPct = annualPerUnit > 0 ? ((busy * demandActive) / (qty * annualPerUnit)) * 100 : 0;
+    const shiftsUsed = busy / hps;
+    const programmeShifts = windowShifts * qty;
+    const dutyPct = programmeShifts > 0 ? (shiftsUsed / programmeShifts) * 100 : 0;
+    let hardConf = 0;
 
     // Concurrency sweep on the early-start schedule (Per-Op resources only).
     let peak = r.dwellMode === 'Full-Build' ? 1 : 0;
@@ -569,6 +595,7 @@ export function buildModel(ws: Workspace, scope: Scope): Model {
             shiftHrs: useB ? shiftB : shiftA,
           });
           nConf++;
+          if (conflicts[conflicts.length - 1].hard) hardConf++;
         }
         active.push(cur);
         peak = Math.max(peak, active.length);
@@ -577,7 +604,7 @@ export function buildModel(ws: Workspace, scope: Scope): Model {
     let rag = dutyRag(dutyPct, s);
     if (nConf > 0) rag = worstRag([rag, 'amber']);
     resources.push({
-      resource: r, busyHrs: busy, opCount: users.length, ops: [...new Set(users.map((u) => u.leaf.opId))], dutyPct,
+      resource: r, busyHrs: busy, shiftsUsed, programmeShifts, highRisk: dutyPct > s.thresholds.dutySeriousPct || hardConf > 0, opCount: users.length, ops: [...new Set(users.map((u) => u.leaf.opId))], dutyPct,
       peakConcurrent: peak, rag, conflicts: nConf,
       requiredQty: Math.max(Math.ceil((dutyPct / 100) * qty / Math.max(0.01, s.thresholds.dutySeriousPct / 100) - EPS), r.dwellMode === 'Per-Op' ? Math.min(peak, qty) : 1),
     });
@@ -628,7 +655,7 @@ export function buildModel(ws: Workspace, scope: Scope): Model {
   return {
     cal, lc, wastePct: waste, windowNominal, windowPeak, windowActive, demandActive, fpds, rows, calcs, cpm,
     durationMonths, durationDays: cal.hoursPerDay > 0 ? cpm.durationHrs / cal.hoursPerDay : 0,
-    totals, lifts, resources, conflicts, cells, fpdRoll, peakCrew, scheduleRag, windowRatio,
+    totals, lifts, resources, conflicts, cells, fpdRoll, peakCrew, space: buildSpace(ws, leaves, cpm), scheduleRag, windowRatio,
     concurrentBuilds: Number.isFinite(windowActive) && windowActive > 0 ? Math.max(1, Math.ceil(durationMonths / windowActive - EPS)) : 1,
   };
 }

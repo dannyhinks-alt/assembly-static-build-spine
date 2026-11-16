@@ -19,7 +19,7 @@ export const defaultSettings = (): Settings => ({
   thresholds: {
     heavyLiftKg: 250, multiPersonCrew: 2, highElevationM: 2.0, highElevationFloors: 2, multiToolItems: 2,
     dutyAmberPct: 65, dutySeriousPct: 85, arRedPct: 100, arMinCycleMin: 5, nearCriticalFloatHrs: 40,
-    rpnAmber: 80, rpnSerious: 120, rpnRed: 200,
+    rpnAmber: 80, rpnSerious: 120, rpnRed: 200, blindSpotSeverity: 8,
   },
 });
 
@@ -32,15 +32,18 @@ const cells: Cell[] = [
   { id: 'C6', number: 6, name: 'Final Test & Dispatch Bay', crewPerShift: 2, notes: 'Hydro bench, acceptance test, preservation and dispatch.' },
 ];
 
+const zone = (id: string, cellId: string, name: string, pos: [number, number], cap: number, futurePos: [number, number] | null = null): Zone => ({
+  id, cellId, name, pos, futurePos, maxCrewPerLevel: cap,
+});
 const zones: Zone[] = [
-  { id: 'ZA', cellId: 'C1', name: 'Zone A · Main Stores Input' },
-  { id: 'ZA2', cellId: 'C1', name: 'Zone A2 · Kit Marshalling' },
-  { id: 'ZB', cellId: 'C2', name: 'Zone B · Prep A Benches' },
-  { id: 'ZC', cellId: 'C3', name: 'Zone C · Prep B & Jib' },
-  { id: 'ZD', cellId: 'C4', name: 'Zone D · PMA Static Build Stand' },
-  { id: 'ZE', cellId: 'C5', name: 'Zone E · UMA Heavy Build' },
-  { id: 'ZF', cellId: 'C6', name: 'Zone F · Test Bay' },
-  { id: 'ZG', cellId: 'C6', name: 'Zone G · Final Dispatch Bay' },
+  zone('ZA', 'C1', 'Zone A · Main Stores Input', [8, 30], 6),
+  zone('ZA2', 'C1', 'Zone A2 · Kit Marshalling', [8, 11], 6, [13, 19]),
+  zone('ZB', 'C2', 'Zone B · Prep A Benches', [24, 30], 6, [27, 25]),
+  zone('ZC', 'C3', 'Zone C · Prep B & Jib', [24, 11], 6, [29, 14]),
+  zone('ZD', 'C4', 'Zone D · PMA Static Build Stand', [46, 12], 8),
+  zone('ZE', 'C5', 'Zone E · UMA Heavy Build', [46, 32], 8, [46, 29]),
+  zone('ZF', 'C6', 'Zone F · Test Bay', [69, 12], 6, [63, 13]),
+  zone('ZG', 'C6', 'Zone G · Final Dispatch Bay', [69, 33], 6),
 ];
 
 const fpds: Fpd[] = [
@@ -79,31 +82,32 @@ const res = (
   id: string, kind: ResourceKind, name: string, cellId: string, o: Partial<Resource> = {},
 ): Resource => ({
   id, kind, name, qty: 1, cellId, swlKg: null, hookHeightM: null, headroomM: null, tareKg: null, tiers: null, tierHeightM: null,
-  toolingClass: 'Standard', dwellMode: 'Per-Op', notes: '', ...o,
+  complexity: [1, 1, 1, 1], footprintLM: null, footprintWM: null, utilities: [], dwellMode: 'Per-Op', notes: '', ...o,
 });
+const U = { p415: '415 V 3-phase', p230: '230 V single-phase', air: 'Compressed air', argon: 'Argon / shield gas', he: 'Helium', water: 'Demineralised water', lev: 'Extraction (LEV)', data: 'Data / network' };
 const resources: Resource[] = [
-  res('R1', 'rig', 'Orbital Welding Rig', 'C2', { toolingClass: 'Complex' }),
-  res('R2', 'rig', 'DC Multi-Nutrunner Array', 'C4', { toolingClass: 'Complex' }),
-  res('R3', 'rig', 'High-Pressure Hydro Bench', 'C6', { toolingClass: 'Complex' }),
-  res('R4', 'rig', 'Laser Alignment Tracker', '', { qty: 2 }),
-  res('R5', 'rig', 'Helium Leak Test Set', '', {}),
-  res('K1', 'crane', 'PMA Overhead Gantry 2.5t · 3.5m hook', 'C4', { swlKg: 2500, hookHeightM: 3.5 }),
-  res('K2', 'crane', 'UMA Crane 5.0t · 6.0m hook', 'C5', { swlKg: 5000, hookHeightM: 6.0 }),
-  res('K3', 'crane', 'Zone C Jib Crane 1.0t', 'C3', { swlKg: 1000, hookHeightM: 3.2 }),
-  res('L1', 'rigging', 'L2 4-Leg Chain Sling Set 3.2t', '', { swlKg: 3200, headroomM: 0.9, tareKg: 28, qty: 2 }),
-  res('L2', 'rigging', 'L2 Spreader Beam 2.5t', 'C4', { swlKg: 2500, headroomM: 0.6, tareKg: 85 }),
-  res('L3', 'rigging', 'L3 Modular Lifting Frame 5.0t', '', { swlKg: 5000, headroomM: 0.8, tareKg: 220, toolingClass: 'Complex' }),
+  res('R1', 'rig', 'Orbital Welding Rig', 'C2', { complexity: [3, 3, 2, 3], footprintLM: 2.0, footprintWM: 1.2, utilities: [U.p415, U.argon, U.lev, U.data] }),
+  res('R2', 'rig', 'DC Multi-Nutrunner Array', 'C4', { complexity: [3, 2, 3, 3], footprintLM: 2.5, footprintWM: 1.5, utilities: [U.p415, U.data] }),
+  res('R3', 'rig', 'High-Pressure Hydro Bench', 'C6', { complexity: [3, 3, 2, 3], footprintLM: 4.0, footprintWM: 2.5, utilities: [U.p415, U.water, U.air, U.data] }),
+  res('R4', 'rig', 'Laser Alignment Tracker', '', { qty: 2, complexity: [2, 3, 2, 2], footprintLM: 1.0, footprintWM: 1.0, utilities: [U.p230, U.data] }),
+  res('R5', 'rig', 'Helium Leak Test Set', '', { complexity: [2, 2, 2, 2], footprintLM: 1.2, footprintWM: 0.8, utilities: [U.p230, U.he] }),
+  res('K1', 'crane', 'PMA Overhead Gantry 2.5t · 3.5m hook', 'C4', { swlKg: 2500, hookHeightM: 3.5, complexity: [2, 2, 1, 3], utilities: [U.p415] }),
+  res('K2', 'crane', 'UMA Crane 5.0t · 6.0m hook', 'C5', { swlKg: 5000, hookHeightM: 6.0, complexity: [2, 2, 1, 3], utilities: [U.p415] }),
+  res('K3', 'crane', 'Zone C Jib Crane 1.0t', 'C3', { swlKg: 1000, hookHeightM: 3.2, complexity: [1, 2, 1, 2], footprintLM: 1.0, footprintWM: 1.0, utilities: [U.p415] }),
+  res('L1', 'rigging', 'L2 4-Leg Chain Sling Set 3.2t', '', { swlKg: 3200, headroomM: 0.9, tareKg: 28, qty: 2, complexity: [1, 1, 1, 2] }),
+  res('L2', 'rigging', 'L2 Spreader Beam 2.5t', 'C4', { swlKg: 2500, headroomM: 0.6, tareKg: 85, complexity: [1, 2, 1, 2] }),
+  res('L3', 'rigging', 'L3 Modular Lifting Frame 5.0t', '', { swlKg: 5000, headroomM: 0.8, tareKg: 220, complexity: [3, 3, 3, 2] }),
   res('L4', 'rigging', 'L2 Round Sling Pair 1.0t', '', { swlKg: 1000, headroomM: 0.4, tareKg: 4, qty: 4 }),
-  res('L5', 'rigging', 'L3 Load-Cell Shackle Set', '', { swlKg: 4750, headroomM: 0.2, tareKg: 12, toolingClass: 'Complex' }),
-  res('L6', 'rigging', 'L2 Vacuum Lifter 750 kg', 'C2', { swlKg: 750, headroomM: 0.5, tareKg: 40 }),
-  res('V1', 'vehicle', 'Heavy AGV Transporter', '', { swlKg: 12000 }),
-  res('V2', 'vehicle', 'Air-Skate Mover', 'C4', { swlKg: 8000 }),
-  res('V3', 'vehicle', 'Forklift', 'C1', { swlKg: 2500, qty: 2 }),
-  res('S1', 'stand', '3-Tier Static Build Stand', 'C4', { swlKg: 15000, tiers: 3, tierHeightM: 0.8, dwellMode: 'Full-Build', toolingClass: 'Complex' }),
-  res('S2', 'stand', 'Turnover Jig', 'C5', { swlKg: 3000, tiers: 1, tierHeightM: 0.8, toolingClass: 'Complex' }),
-  res('S3', 'stand', 'WIP Storage Stillage', '', { swlKg: 1500, qty: 6 }),
-  res('S4', 'stand', 'UMA Build Cradle', 'C5', { swlKg: 6000, tiers: 1, tierHeightM: 0.8 }),
-  res('S5', 'stand', 'Core Barrel Assembly Fixture', 'C3', { swlKg: 2000, tiers: 1, tierHeightM: 0.8 }),
+  res('L5', 'rigging', 'L3 Load-Cell Shackle Set', '', { swlKg: 4750, headroomM: 0.2, tareKg: 12, complexity: [3, 2, 2, 3], utilities: [U.data] }),
+  res('L6', 'rigging', 'L2 Vacuum Lifter 750 kg', 'C2', { swlKg: 750, headroomM: 0.5, tareKg: 40, complexity: [2, 2, 1, 2], utilities: [U.air] }),
+  res('V1', 'vehicle', 'Heavy AGV Transporter', '', { swlKg: 12000, complexity: [3, 2, 1, 2], footprintLM: 4.0, footprintWM: 2.5, utilities: [U.p415, U.data] }),
+  res('V2', 'vehicle', 'Air-Skate Mover', 'C4', { swlKg: 8000, complexity: [2, 2, 2, 1], footprintLM: 2.0, footprintWM: 2.0, utilities: [U.air] }),
+  res('V3', 'vehicle', 'Forklift', 'C1', { swlKg: 2500, qty: 2, complexity: [1, 2, 1, 2], footprintLM: 2.5, footprintWM: 1.2 }),
+  res('S1', 'stand', '3-Tier Static Build Stand', 'C4', { swlKg: 15000, tiers: 3, tierHeightM: 0.8, dwellMode: 'Full-Build', complexity: [3, 2, 3, 2], footprintLM: 12, footprintWM: 12, utilities: [U.p415, U.air, U.lev, U.data] }),
+  res('S2', 'stand', 'Turnover Jig', 'C5', { swlKg: 3000, tiers: 1, tierHeightM: 0.8, complexity: [3, 3, 2, 2], footprintLM: 4, footprintWM: 3, utilities: [U.p415] }),
+  res('S3', 'stand', 'WIP Storage Stillage', '', { swlKg: 1500, qty: 6, footprintLM: 1.2, footprintWM: 1.0 }),
+  res('S4', 'stand', 'UMA Build Cradle', 'C5', { swlKg: 6000, tiers: 1, tierHeightM: 0.8, complexity: [1, 1, 2, 1], footprintLM: 4, footprintWM: 4 }),
+  res('S5', 'stand', 'Core Barrel Assembly Fixture', 'C3', { swlKg: 2000, tiers: 1, tierHeightM: 0.8, complexity: [2, 1, 2, 2], footprintLM: 3, footprintWM: 3, utilities: [U.air] }),
 ];
 
 interface RowOpt {
@@ -123,7 +127,8 @@ const row = (fpdId: string, opId: string, description: string, o: RowOpt): BopRo
   floorLevel: o.lvl ?? 0,
   componentIds: o.cmp ?? [],
   crewSize: o.crew ?? 2,
-  runHrs: o.run,
+  // `man` given → equipment-paced op (Bay Run Time = run). Otherwise a manual op: no equipment cycle, Manning = run.
+  runHrs: o.man === undefined ? 0 : o.run,
   touchHrs: o.touch ?? o.man ?? o.run,
   manningHrs: o.man ?? o.run,
   classification: o.cls ?? 'VA',
@@ -177,7 +182,7 @@ const rows: BopRow[] = [
   row('F5', 'F5-050', 'Install fuel cell modules at Level 2', { pre: ['F5-040', 'F2-060'], from: 'ZB', to: 'ZD', lvl: 2, run: 16, crew: 4, cls: 'NNVA', act: 'Lifting', cmp: ['M01'], crane: ['K1'], rigging: ['L2'], veh: ['V3'], stand: ['S1'], lifts: 4, moves: 4 }),
   row('F5', 'F5-060', 'Install pipework spools and complete closure welds', { pre: ['F5-050', 'F4-050'], to: 'ZD', lvl: 2, run: 320, touch: 250, crew: 3, act: 'Welding / Joining', cmp: ['M05'], rig: ['R1'], crane: ['K1'], rigging: ['L4'], stand: ['S1'], lifts: 6 }),
   row('F5', 'F5-070', 'Multi-nutrunner bolting of primary joints', { to: 'ZD', lvl: 2, run: 90, touch: 40, man: 90, act: 'Fastening', cmp: ['M11'], rig: ['R2'], stand: ['S1'] }),
-  row('F5', 'F5-080', 'Electrical harness and instrument rack installation', { par: true, pre: ['F5-050'], to: 'ZD', lvl: 2, run: 240, touch: 200, crew: 3, act: 'Fitting', cmp: ['M10', 'M13'], crane: ['K1'], rigging: ['L4'], stand: ['S1'], lifts: 2 }),
+  row('F5', 'F5-080', 'Electrical harness and instrument rack installation at Level 1', { par: true, pre: ['F5-050'], to: 'ZD', lvl: 1, run: 240, touch: 200, crew: 3, act: 'Fitting', cmp: ['M10', 'M13'], crane: ['K1'], rigging: ['L4'], stand: ['S1'], lifts: 2 }),
   row('F5', 'F5-090', 'Lift and fit closure head at Level 3', { pre: ['F5-070', 'F5-080'], to: 'ZD', lvl: 3, run: 10, crew: 4, cls: 'NNVA', act: 'Lifting', cmp: ['M12'], crane: ['K1'], rigging: ['L2'], stand: ['S1'], lifts: 1 }),
   row('F5', 'F5-100', 'In-stand pressure and leak pre-test', { to: 'ZD', lvl: 1, run: 72, touch: 14, man: 30, cls: 'NNVA', act: 'Testing', rig: ['R5'], stand: ['S1'] }),
   row('F5', 'F5-110', 'Wait for crane availability and access permits', { to: 'ZD', run: 16, touch: 0, crew: 4, cls: 'NVA', act: 'Administrating', stand: ['S1'], notes: 'Crew stood down while gantry serves parallel work.' }),
@@ -202,7 +207,7 @@ const rows: BopRow[] = [
   row('F8', 'F8-010', 'Transfer mated assembly to test bay', { pre: ['F7-050'], from: 'ZD', to: 'ZF', run: 10, crew: 4, cls: 'NNVA', act: 'Moving', veh: ['V1', 'V2'], moves: 1 }),
   row('F8', 'F8-020', 'High-pressure hydro test', { to: 'ZF', run: 96, touch: 16, man: 40, cls: 'NNVA', act: 'Testing', rig: ['R3'] }),
   row('F8', 'F8-025', 'Wait for test witness availability', { to: 'ZF', run: 14, touch: 0, cls: 'NVA', act: 'Administrating', notes: 'Witness attendance not booked against the build schedule.' }),
-  row('F8', 'F8-030', 'Final functional and acceptance test', { to: 'ZF', run: 80, touch: 60, cls: 'NNVA', act: 'Testing' }),
+  row('F8', 'F8-030', 'Final functional and acceptance test', { to: 'ZF', run: 80, touch: 45, man: 60, cls: 'NNVA', act: 'Testing' }),
   row('F8', 'F8-040', 'Final inspection and documentation pack', { to: 'ZF', run: 60, touch: 50, cls: 'NNVA', act: 'Administrating' }),
   row('F8', 'F8-050', 'Preserve, pack and secure to transit frame', { from: 'ZF', to: 'ZG', run: 36, touch: 30, crew: 4, cls: 'NNVA', act: 'Moving', cmp: ['M14'], veh: ['V2', 'V3'], moves: 2 }),
   row('F8', 'F8-060', 'Dispatch release and vehicle loading', { to: 'ZG', run: 8, crew: 3, cls: 'NNVA', act: 'Moving', veh: ['V1'], moves: 1 }),
@@ -214,7 +219,7 @@ export function seedWorkspace(): Workspace {
   const now = new Date().toISOString();
   return {
     schema: WORKSPACE_SCHEMA,
-    meta: { name: 'PMA / UMA Heavy Assembly Baseline', factoryId: 'SB1', factoryName: 'Static Build & Heavy Assembly Factory', createdAt: now, updatedAt: now, appVersion: APP_VERSION },
+    meta: { name: 'PMA / UMA Heavy Assembly Baseline', factoryId: 'F4', factoryName: 'F4 · Static Build & Heavy Assembly Factory', createdAt: now, updatedAt: now, appVersion: APP_VERSION },
     settings: defaultSettings(),
     cells: structuredClone(cells),
     zones: structuredClone(zones),
@@ -223,14 +228,15 @@ export function seedWorkspace(): Workspace {
     resources: structuredClone(resources),
     rows: structuredClone(rows),
     pfmea: [
-      { id: 'P1', fpdId: 'F5', opId: 'F5-090', failureMode: 'Closure head contacts gantry hook block before clearing Level 3 landing', effect: 'Dropped / snagged load, damage to closure head sealing face, injury to slinger at height', cause: 'Required hook height exceeds 3.5 m gantry envelope with spreader beam fitted', controls: 'Lift plan review; spotter at Level 3', s: 9, o: 5, d: 5, recommendedAction: 'Re-plan lift with low-headroom round slings or lower the landing level; re-run hook-height check in Tab 8.', owner: 'Lifting Appointed Person', status: 'Open' },
-      { id: 'P2', fpdId: 'F5', opId: 'F5-010', failureMode: 'Base frame lift at >90% of gantry SWL', effect: 'Overload trip mid-lift, load left suspended over stand', cause: 'Frame 2,180 kg plus 85 kg spreader beam against 2,500 kg SWL', controls: 'Load-cell shackle read-out; calibrated SWL limiter', s: 8, o: 3, d: 3, recommendedAction: 'Confirm weighed mass of base frame at goods-in; remove transit fittings before lift.', owner: 'Manufacturing Engineer', status: 'In Progress' },
-      { id: 'P3', fpdId: 'F4', opId: 'F4-020', failureMode: 'Orbital weld lack of fusion on spool butt joint', effect: 'Weld rejected at radiography; cut-out and re-weld delays pipework install', cause: 'Purge gas contamination or incorrect weld schedule selected', controls: 'Weld procedure qualification; purge oxygen monitor; coupon per shift', s: 7, o: 4, d: 3, recommendedAction: 'Add weld-schedule barcode interlock on rig.', owner: 'Welding Engineer', status: 'Open' },
-      { id: 'P4', fpdId: 'F5', opId: 'F5-070', failureMode: 'Primary joint under-torqued', effect: 'Joint leak at hydro test; re-work on stand', cause: 'Nutrunner channel out of calibration', controls: 'Daily torque verification; angle monitoring', s: 8, o: 2, d: 2, recommendedAction: 'None — controls adequate.', owner: 'Quality Engineer', status: 'Closed' },
-      { id: 'P5', fpdId: 'F7', opId: 'F7-020', failureMode: 'UMA misaligned to PMA dowels during mate', effect: 'Dowel damage and interface re-machining', cause: 'Load swing; inadequate guide pins; poor visibility for crane operator', controls: 'Guide pins; 5-person lift team with dedicated signaller', s: 8, o: 4, d: 4, recommendedAction: 'Introduce laser-tracker live alignment during final 50 mm of lowering.', owner: 'Manufacturing Engineer', status: 'Open' },
-      { id: 'P6', fpdId: 'F3', opId: 'F3-020', failureMode: 'Jib crane loaded near SWL with core barrel', effect: 'Jib deflection, uncontrolled slew', cause: 'Barrel 920 kg plus sling tare on 1.0 t jib', controls: 'Pre-use check; no side loading', s: 7, o: 3, d: 4, recommendedAction: 'Assess move of this lift to PMA gantry or uprate jib.', owner: 'Lifting Appointed Person', status: 'Open' },
-      { id: 'P7', fpdId: 'F8', opId: 'F8-020', failureMode: 'Hydro test pressure not held', effect: 'Test repeat (4 days); programme slip on critical path', cause: 'Seal damage during integration', controls: 'In-stand pre-test (F5-100)', s: 6, o: 3, d: 2, recommendedAction: 'Trend pre-test leak rates build to build.', owner: 'Test Engineer', status: 'In Progress' },
-      { id: 'P8', fpdId: 'F1', opId: 'F1-020', failureMode: 'Non-conforming component accepted at receipt', effect: 'Defect found on build stand; strip-down', cause: 'Sampling inspection misses dimensional non-conformance', controls: 'Supplier CofC; first-article inspection', s: 7, o: 3, d: 5, recommendedAction: 'Extend 100% dimensional check to core barrel and base frame.', owner: 'Quality Engineer', status: 'Open' },
+      { id: 'P1', fpdId: 'F5', opId: 'F5-090', failureMode: 'Closure head contacts gantry hook block before clearing Level 3 landing', effect: 'Dropped / snagged load, damage to closure head sealing face, injury to slinger at height', cause: 'Required hook height exceeds 3.5 m gantry envelope with spreader beam fitted', controls: 'Lift plan review; spotter at Level 3', s: 9, o: 5, d: 5, recommendedAction: 'Re-plan lift with low-headroom round slings or lower the landing level; re-run the hook-height stack-up in Tab 4.', owner: 'Lifting Appointed Person', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['K1', 'L2', 'S1'] },
+      { id: 'P9', fpdId: 'F5', opId: 'F5-090', failureMode: 'Closure head sealing face damaged on landing', effect: 'Seal leak found at hydro test; closure head removal and re-lap', cause: 'Head lowered out of level; no soft-landing packers', controls: 'Level check on spreader; landing packers in kit', s: 8, o: 2, d: 3, recommendedAction: 'Add packer check to the lift plan sign-off sheet.', owner: 'Manufacturing Engineer', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['L2', 'S1'] },
+      { id: 'P2', fpdId: 'F5', opId: 'F5-010', failureMode: 'Base frame lift at >90% of gantry SWL', effect: 'Overload trip mid-lift, load left suspended over stand', cause: 'Frame 2,180 kg plus 85 kg spreader beam against 2,500 kg SWL', controls: 'Load-cell shackle read-out; calibrated SWL limiter', s: 8, o: 3, d: 3, recommendedAction: 'Confirm weighed mass of base frame at goods-in; remove transit fittings before lift.', owner: 'Manufacturing Engineer', status: 'In Progress', controlDocForced: false, controlDocRef: 'LP-PMA-014 Base Frame Lift Plan', resourceIds: ['K1', 'L2'] },
+      { id: 'P3', fpdId: 'F4', opId: 'F4-020', failureMode: 'Orbital weld lack of fusion on spool butt joint', effect: 'Weld rejected at radiography; cut-out and re-weld delays pipework install', cause: 'Purge gas contamination or incorrect weld schedule selected', controls: 'Weld procedure qualification; purge oxygen monitor; coupon per shift', s: 7, o: 4, d: 3, recommendedAction: 'Add weld-schedule barcode interlock on rig.', owner: 'Welding Engineer', status: 'Open', controlDocForced: false, controlDocRef: 'WPS-ORB-007', resourceIds: ['R1'] },
+      { id: 'P4', fpdId: 'F5', opId: 'F5-070', failureMode: 'Primary joint under-torqued', effect: 'Joint leak at hydro test; re-work on stand', cause: 'Nutrunner channel out of calibration', controls: 'Daily torque verification; angle monitoring', s: 8, o: 2, d: 2, recommendedAction: 'None — controls adequate.', owner: 'Quality Engineer', status: 'Closed', controlDocForced: false, controlDocRef: 'WI-5070 Torque Procedure', resourceIds: ['R2'] },
+      { id: 'P5', fpdId: 'F7', opId: 'F7-020', failureMode: 'UMA misaligned to PMA dowels during mate', effect: 'Dowel damage and interface re-machining', cause: 'Load swing; inadequate guide pins; poor visibility for crane operator', controls: 'Guide pins; 5-person lift team with dedicated signaller', s: 8, o: 4, d: 4, recommendedAction: 'Introduce laser-tracker live alignment during final 50 mm of lowering.', owner: 'Manufacturing Engineer', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['K1', 'L3', 'S1'] },
+      { id: 'P6', fpdId: 'F3', opId: 'F3-020', failureMode: 'Jib crane loaded near SWL with core barrel', effect: 'Jib deflection, uncontrolled slew', cause: 'Barrel 920 kg plus sling tare on 1.0 t jib', controls: 'Pre-use check; no side loading', s: 7, o: 3, d: 4, recommendedAction: 'Assess move of this lift to PMA gantry or uprate jib.', owner: 'Lifting Appointed Person', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['K3', 'L1'] },
+      { id: 'P7', fpdId: 'F8', opId: 'F8-020', failureMode: 'Hydro test pressure not held', effect: 'Test repeat (4 days); programme slip on critical path', cause: 'Seal damage during integration', controls: 'In-stand pre-test (F5-100)', s: 6, o: 3, d: 2, recommendedAction: 'Trend pre-test leak rates build to build.', owner: 'Test Engineer', status: 'In Progress', controlDocForced: false, controlDocRef: '', resourceIds: ['R3'] },
+      { id: 'P8', fpdId: 'F1', opId: 'F1-020', failureMode: 'Non-conforming component accepted at receipt', effect: 'Defect found on build stand; strip-down', cause: 'Sampling inspection misses dimensional non-conformance', controls: 'Supplier CofC; first-article inspection', s: 7, o: 3, d: 5, recommendedAction: 'Extend 100% dimensional check to core barrel and base frame.', owner: 'Quality Engineer', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['R4'] },
     ],
     holdPoints: [
       { id: 'H1', fpdId: 'F3', opId: 'F3-050', type: 'Hold', title: 'Core barrel dimensional buy-off', notes: 'Survey report signed by QA before barrel leaves fixture.', status: 'Released' },

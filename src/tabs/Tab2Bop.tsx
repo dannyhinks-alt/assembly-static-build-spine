@@ -1,12 +1,13 @@
 import type { Draft } from 'immer';
 import { Fragment, useMemo, useState } from 'react';
 import { Empty, ExpandableTextCell, HowItWorks, Kpi, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip, type TagOption } from '../components/primitives';
+import { FpdRegistryCard } from '../components/FpdRegistry';
 import { blankRow } from '../data/seed';
 import { isBlock, leavesOf, opIndex, rollUpBlock, type CpmNode, type LeafCalc, type RowCalc } from '../engine/model';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
 import { useStore } from '../store';
 import type { BopRow, Classification, ResourceField, Workspace } from '../types';
-import { ACTION_TYPES, CLASSIFICATIONS, FLOOR_LEVELS, RESOURCE_KINDS, uid } from '../types';
+import { ACTION_TYPES, CLASSIFICATIONS, FLOOR_LEVELS, RESOURCE_KINDS, complexityOf, uid } from '../types';
 
 const CLASS_HEX: Record<Classification, string> = { VA: '#334155', NNVA: '#94a3b8', NVA: '#d03b3b' };
 const CLASS_SHORT: Record<Classification, string> = { VA: 'VA', NNVA: 'NNVA', NVA: 'NVA' };
@@ -61,7 +62,7 @@ export default function Tab2Bop() {
   const resOpts = useMemo(() => {
     const out = {} as Record<ResourceField, TagOption[]>;
     for (const k of RESOURCE_KINDS)
-      out[k.field] = ws.resources.filter((r) => r.kind === k.kind).map((r) => ({ id: r.id, label: r.name || '(unnamed)', sub: [r.qty > 1 ? `×${r.qty}` : '', r.swlKg != null ? `${fmtInt(r.swlKg)} kg` : '', r.toolingClass === 'Complex' ? 'Complex' : '', r.dwellMode === 'Full-Build' ? 'Full-Build Dwell' : ''].filter(Boolean).join(' · ') }));
+      out[k.field] = ws.resources.filter((r) => r.kind === k.kind).map((r) => ({ id: r.id, label: r.name || '(unnamed)', sub: [r.qty > 1 ? `×${r.qty}` : '', r.swlKg != null ? `${fmtInt(r.swlKg)} kg` : '', complexityOf(r), r.dwellMode === 'Full-Build' ? 'Full-Build Dwell' : ''].filter(Boolean).join(' · ') }));
     return out;
   }, [ws.resources]);
 
@@ -159,6 +160,7 @@ export default function Tab2Bop() {
     return true;
   };
   const t = m.totals;
+  const manualOps = [...m.calcs.values()].flatMap((c) => c.leaves).filter((l) => l.arPct == null).length;
   const totalClass = { VA: t.va, NNVA: t.nnva, NVA: t.nva };
 
   return (
@@ -168,11 +170,11 @@ export default function Tab2Bop() {
         title="Bill of Process — Mergeable KTP Central Spine"
         steps={[
           'One row per KTP activity, grouped by FPD. Use the Spine Filter above to isolate an FPD, a cell or the whole factory.',
-          'Enter the three-way time split per build: Bay Run Time, Operator Touch Time and Operator Manning Time. Burden, Elapsed Duration, Ar % and Opportunity Time are calculated.',
+          'Enter the three-way time split per build: Bay Run Time, Operator Touch Time and Operator Manning Time. Leave Bay Run Time at 0 for hand work — the row then reads "Manual op" rather than an Attendance Ratio.',
           'Sequential rows follow the row above in the same FPD unless you enter Predecessor # values; Parallel rows start when their listed predecessors finish.',
           'Tag every rig, crane, rigging item, vehicle and stand the activity needs — the five pickers take any number of items each.',
           'Tick two or more rows in one FPD and click Merge Selected into Work Block to roll them up. Expand ▸ to edit the folded activities; Unmerge restores them exactly.',
-          'Any row with a Lift Count enters the Lift Register in Tab 8 and is tested against the Tab 1 thresholds.',
+          'Any row with a Lift Count enters the Lift Register in Tab 4. Open the Multi-FPD Registry above the table to add, clone or deactivate FPDs.',
         ]}
       />
 
@@ -181,9 +183,11 @@ export default function Tab2Bop() {
         <Kpi label="Total labour hours" guide="kpiLabour" value={fmtInt(t.labourHrs)} unit="h / build" sub={`Burden ${fmtInt(t.burdenRaw)} h × ${fmtPct(m.lc * 100, 0)} learning`} />
         <Kpi label="Value-add ratio" guide="kpiVa" value={fmtPct(t.labourHrs ? (t.va / t.labourHrs) * 100 : 0, 0)} sub={<span className="flex items-center gap-2"><ClassBar byClass={totalClass} width={70} /><span>NNVA {fmtPct(t.labourHrs ? (t.nnva / t.labourHrs) * 100 : 0, 0)} · NVA {fmtPct(t.labourHrs ? (t.nva / t.labourHrs) * 100 : 0, 1)}</span></span>} />
         <Kpi label="In-station opportunity" guide="opportunity" value={fmtInt(t.opportunityHrs)} unit="h" sub={`Manning ${fmtInt(t.manningHrs)} h − Touch ${fmtInt(t.touchHrs)} h`} />
-        <Kpi label="Operator-locked ops" guide="kpiAr" value={fmtInt(t.arRedCount)} sub={`Ar ≥ ${ws.settings.thresholds.arRedPct}% of ${fmtInt(t.activities)} activities`} rag={t.arRedCount ? 'amber' : 'green'} />
+        <Kpi label="Machine-locked labour" guide="kpiAr" value={fmtInt(t.arRedCount)} sub={`${fmtInt(manualOps)} manual op(s) with no equipment cycle`} rag={t.arRedCount ? 'red' : 'green'} />
         <Kpi label="Lifts · moves" guide="kpiLifts" value={`${fmtInt(t.lifts)} · ${fmtInt(t.moves)}`} sub={`${fmtInt(t.interCellMoves)} inter-cell work block(s)`} />
       </div>
+
+      <FpdRegistryCard className="mb-4" />
 
       <div className="card">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
@@ -195,7 +199,7 @@ export default function Tab2Bop() {
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />
             <div className="w-36"><Select value={cls} onChange={setCls} ariaLabel="Classification filter" options={[{ value: '', label: 'All classes' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: c.value }))]} /></div>
-            <div className="w-40"><Select value={only} onChange={setOnly} ariaLabel="Row filter" options={[{ value: '', label: 'All rows' }, { value: 'lift', label: 'Lift ops only' }, { value: 'critical', label: 'Critical path only' }, { value: 'ar', label: 'Ar red only' }, { value: 'block', label: 'Work Blocks only' }]} /></div>
+            <div className="w-40"><Select value={only} onChange={setOnly} ariaLabel="Row filter" options={[{ value: '', label: 'All rows' }, { value: 'lift', label: 'Lift ops only' }, { value: 'critical', label: 'Critical path only' }, { value: 'ar', label: 'Machine-locked only' }, { value: 'block', label: 'Work Blocks only' }]} /></div>
           </div>
         </div>
 
@@ -386,7 +390,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className="td w-[74px]">{ro ? num(r.manningHrs) : <NumInput cell value={r.manningHrs} min={0} ariaLabel="Manning time hours" onChange={(v) => onEdit((d) => { d.manningHrs = v ?? 0; })} />}</td>
       <td className="td-ro text-right text-slate-700" title="Manning Time × Crew Size">{fmt(burden, 1)}</td>
       <td className="td-ro text-right font-medium text-slate-900" title="Max(Run, Manning) ÷ Net Active Factor × Learning Curve">{fmt(elapsed, 1)}</td>
-      <td className="td-ro text-right">{arPct == null ? <span className="text-slate-400">—</span> : arRed ? <RagBadge rag="red" label={fmtPct(arPct, 0)} title="Operator locked to the bay for the whole cycle" /> : <span className="text-slate-700">{fmtPct(arPct, 0)}</span>}</td>
+      <td className="td-ro whitespace-nowrap text-right">{arPct == null ? <Pill tone="outline" title="Bay Run Time is 0 — hand work with no equipment cycle">Manual op</Pill> : arRed ? <RagBadge rag="red" label={`${fmtPct(arPct, 0)} · RED – MACHINE LOCKED LABOUR`} title="Run Time > 5 min and Manning Time ≥ Run Time: the equipment cycle holds an operator for its whole duration" /> : <span className="text-slate-700">{fmtPct(arPct, 0)}</span>}</td>
       <td className="td-ro text-right text-slate-700">{fmt(opp, 1)}</td>
       <td className="td" style={{ minWidth: 150 }}>
         {ro ? <span className="flex items-center gap-1.5 px-1.5 py-1.5"><ClassBar byClass={calc!.byClass} width={64} /><span className="text-[11px] text-slate-500">{CLASS_SHORT[r.classification]}</span></span> : (

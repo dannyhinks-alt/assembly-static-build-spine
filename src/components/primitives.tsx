@@ -401,16 +401,25 @@ export function Pill({ children, tone = 'slate', title }: { children: ReactNode;
   return <span title={title} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-[1px] text-[11px] font-medium leading-4 ${c}`}>{children}</span>;
 }
 
-export function Card({ title, guide, right, children, className = '', pad = true }: { title?: ReactNode; guide?: GuideId; right?: ReactNode; children: ReactNode; className?: string; pad?: boolean }) {
+export function Card({ title, guide, right, children, className = '', pad = true, collapseKey, defaultOpen = true }: { title?: ReactNode; guide?: GuideId; right?: ReactNode; children: ReactNode; className?: string; pad?: boolean; collapseKey?: string; defaultOpen?: boolean }) {
+  const key = `asbcs.card.${collapseKey}`;
+  const [open, setOpen] = useState(() => {
+    if (!collapseKey) return true;
+    try { const v = localStorage.getItem(key); return v == null ? defaultOpen : v === '1'; } catch { return defaultOpen; }
+  });
+  const flip = () => setOpen((o) => { try { localStorage.setItem(key, o ? '0' : '1'); } catch { /* storage unavailable */ } return !o; });
   return (
     <section className={`card ${className}`}>
       {title && (
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
-          <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">{title}{guide && <Tip id={guide} />}</h2>
+        <header className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 ${open ? 'border-b border-slate-200' : ''}`}>
+          <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
+            {collapseKey && <button type="button" onClick={flip} aria-expanded={open} aria-label={open ? 'Collapse section' : 'Expand section'} className="-ml-1 w-5 rounded text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-900">{open ? '▾' : '▸'}</button>}
+            {title}{guide && <Tip id={guide} />}
+          </h2>
           {right && <div className="flex flex-wrap items-center gap-2">{right}</div>}
         </header>
       )}
-      <div className={pad ? 'p-4' : ''}>{children}</div>
+      {open && <div className={pad ? 'p-4' : ''}>{children}</div>}
     </section>
   );
 }
