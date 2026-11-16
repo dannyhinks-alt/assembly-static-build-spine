@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-feature-settings: 'tnum' 1, 'cv11' 1; }
+  body { @apply bg-slate-50 text-slate-800 antialiased; }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type='number'] { -moz-appearance: textfield; }
+  :focus-visible { outline: 2px solid #0f172a; outline-offset: 1px; }
+}
+
+@layer components {
+  .card { @apply bg-white border border-slate-200 rounded-lg shadow-sm; }
+  .inp { @apply w-full rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-slate-800 tabular-nums placeholder:text-slate-400 hover:border-slate-400 focus:border-slate-600 focus:outline-none; }
+  .inp-cell { @apply w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-[12.5px] text-slate-800 tabular-nums hover:border-slate-300 focus:border-slate-600 focus:bg-white focus:outline-none; }
+  .btn { @apply inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-[12.5px] font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45; }
+  .btn-primary { @apply inline-flex items-center gap-1.5 rounded border border-slate-900 bg-slate-900 px-2.5 py-1.5 text-[12.5px] font-medium text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-45; }
+  .btn-ghost { @apply inline-flex items-center gap-1 rounded px-1.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40; }
+  .th { @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500; }
+  .td { @apply border-b border-slate-100 px-1 py-0.5 align-top text-[12.5px]; }
+  .td-ro { @apply border-b border-slate-100 px-2 py-1.5 align-top text-[12.5px] tabular-nums; }
+  .lbl { @apply text-[11px] font-semibold uppercase tracking-wide text-slate-500; }
+}
+
+.scroll-thin { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+@media print { .no-print { display: none !important; } }

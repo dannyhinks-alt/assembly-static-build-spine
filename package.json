@@ -1,0 +1,34 @@
+{
+  "name": "assembly-static-build-spine",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Assembly & Static Build Central Spine v1.0 \u2014 offline-first multi-FPD Bill of Process spine for heavy static build factories",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:static": "tsc --noEmit && vite build --mode static",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:pages": "npm run build && node -e \"require('fs').mkdirSync('docs',{recursive:true});require('fs').copyFileSync('dist/index.html','docs/index.html')\""
+  },
+  "dependencies": {
+    "immer": "^11.2.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.6.2",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^2.1.9"
+  }
+}

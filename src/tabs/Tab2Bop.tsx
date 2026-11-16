@@ -1,0 +1,417 @@
+import type { Draft } from 'immer';
+import { Fragment, useMemo, useState } from 'react';
+import { Empty, ExpandableTextCell, HowItWorks, Kpi, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip, type TagOption } from '../components/primitives';
+import { blankRow } from '../data/seed';
+import { isBlock, leavesOf, opIndex, rollUpBlock, type CpmNode, type LeafCalc, type RowCalc } from '../engine/model';
+import { fmt, fmtInt, fmtPct } from '../lib/format';
+import { useStore } from '../store';
+import type { BopRow, Classification, ResourceField, Workspace } from '../types';
+import { ACTION_TYPES, CLASSIFICATIONS, FLOOR_LEVELS, RESOURCE_KINDS, uid } from '../types';
+
+const CLASS_HEX: Record<Classification, string> = { VA: '#334155', NNVA: '#94a3b8', NVA: '#d03b3b' };
+const CLASS_SHORT: Record<Classification, string> = { VA: 'VA', NNVA: 'NNVA', NVA: 'NVA' };
+const CLASS_LONG: Record<Classification, string> = { VA: 'VA · Value-Add', NNVA: 'NNVA · Necessary', NVA: 'NVA · Pure Waste' };
+
+/** Next free Op # for an FPD, stepping in tens (F5-110 → F5-120). */
+export function nextOpId(ws: Workspace, fpdId: string): string {
+  const taken = new Set(ws.rows.flatMap((r) => [r.opId, ...(r.children ?? []).map((c) => c.opId)]));
+  const mine = ws.rows.filter((r) => r.fpdId === fpdId).flatMap((r) => leavesOf(r).map((l) => l.opId));
+  let prefix = `F${ws.fpds.findIndex((f) => f.fpdId === fpdId) + 1}-`;
+  let max = 0;
+  for (const op of mine) {
+    const m = op.match(/^(.*?)(\d+)$/);
+    if (m) { prefix = m[1]; max = Math.max(max, parseInt(m[2], 10)); }
+  }
+  let n = max + 10;
+  while (taken.has(`${prefix}${String(n).padStart(3, '0')}`)) n += 10;
+  return `${prefix}${String(n).padStart(3, '0')}`;
+}
+
+export function ClassBar({ byClass, width = 96 }: { byClass: Record<Classification, number>; width?: number }) {
+  const total = byClass.VA + byClass.NNVA + byClass.NVA;
+  if (total <= 0) return <span className="text-slate-400">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5" title={(['VA', 'NNVA', 'NVA'] as Classification[]).map((k) => `${k} ${fmt((byClass[k] / total) * 100, 0)}%`).join(' · ')}>
+      <span className="flex h-2 overflow-hidden rounded-sm bg-slate-100" style={{ width }}>
+        {(['VA', 'NNVA', 'NVA'] as Classification[]).map((k) => byClass[k] > 0 && <span key={k} className="h-2 border-r-2 border-white last:border-r-0" style={{ width: `${(byClass[k] / total) * 100}%`, backgroundColor: CLASS_HEX[k] }} />)}
+      </span>
+    </span>
+  );
+}
+
+export function CpmBadge({ node, nearHrs }: { node?: CpmNode; nearHrs: number }) {
+  if (!node) return null;
+  if (node.critical) return <Pill tone="dark" title="Zero float — on the critical path">Critical</Pill>;
+  if (node.float <= nearHrs && node.dur > 0) return <RagBadge rag="amber" label="Near-critical" title={`Float ${fmt(node.float, 1)} h`} />;
+  return <Pill tone="outline" title={`Float ${fmt(node.float, 1)} elapsed h`}>Float {fmt(node.float, 0)} h</Pill>;
+}
+
+export default function Tab2Bop() {
+  const { ws, mutate, model: m, toast } = useStore();
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [q, setQ] = useState('');
+  const [cls, setCls] = useState<'' | Classification>('');
+  const [only, setOnly] = useState<'' | 'lift' | 'critical' | 'ar' | 'block'>('');
+
+  const known = useMemo(() => opIndex(ws.rows), [ws.rows]);
+  const zoneOpts = useMemo(() => [{ value: '', label: '—' }, ...ws.zones.map((z) => { const c = ws.cells.find((x) => x.id === z.cellId); return { value: z.id, label: z.name, group: c ? `Cell ${c.number} · ${c.name}` : 'No cell' }; })], [ws.zones, ws.cells]);
+  const fpdOpts = useMemo(() => ws.fpds.map((f) => ({ value: f.fpdId, label: f.fpdCode })), [ws.fpds]);
+  const cmpOpts: TagOption[] = useMemo(() => ws.components.map((c) => ({ id: c.id, label: c.name || c.bomRef, sub: `${c.bomRef} · ${c.weightKg == null ? 'no weight' : `${fmtInt(c.weightKg)} kg`}` })), [ws.components]);
+  const resOpts = useMemo(() => {
+    const out = {} as Record<ResourceField, TagOption[]>;
+    for (const k of RESOURCE_KINDS)
+      out[k.field] = ws.resources.filter((r) => r.kind === k.kind).map((r) => ({ id: r.id, label: r.name || '(unnamed)', sub: [r.qty > 1 ? `×${r.qty}` : '', r.swlKg != null ? `${fmtInt(r.swlKg)} kg` : '', r.toolingClass === 'Complex' ? 'Complex' : '', r.dwellMode === 'Full-Build' ? 'Full-Build Dwell' : ''].filter(Boolean).join(' · ') }));
+    return out;
+  }, [ws.resources]);
+
+  const edit = (topId: string, childId: string | null, fn: (r: Draft<BopRow>) => void) =>
+    mutate((d) => {
+      const top = d.rows.find((r) => r.id === topId);
+      if (!top) return;
+      if (childId) {
+        const c = top.children?.find((x) => x.id === childId);
+        if (!c) return;
+        fn(c);
+        rollUpBlock(top as BopRow);
+      } else fn(top);
+    });
+
+  const addRow = (fpdId: string, afterId?: string) => {
+    const zone = ws.zones.find((z) => z.cellId === ws.fpds.find((f) => f.fpdId === fpdId)?.assignedCellId)?.id ?? '';
+    const row = blankRow(fpdId, nextOpId(ws, fpdId), zone);
+    mutate((d) => {
+      let at = afterId ? d.rows.findIndex((r) => r.id === afterId) + 1 : -1;
+      if (at <= 0) { const last = d.rows.map((r) => r.fpdId).lastIndexOf(fpdId); at = last >= 0 ? last + 1 : d.rows.length; }
+      d.rows.splice(at, 0, row);
+    });
+  };
+  const move = (id: string, dir: -1 | 1) =>
+    mutate((d) => {
+      const i = d.rows.findIndex((r) => r.id === id);
+      if (i < 0) return;
+      let j = i + dir;
+      while (j >= 0 && j < d.rows.length && d.rows[j].fpdId !== d.rows[i].fpdId) j += dir;
+      if (j < 0 || j >= d.rows.length) return;
+      [d.rows[i], d.rows[j]] = [d.rows[j], d.rows[i]];
+    });
+  const duplicate = (id: string) =>
+    mutate((d) => {
+      const i = d.rows.findIndex((r) => r.id === id);
+      if (i < 0) return;
+      const src = d.rows[i];
+      const copy: BopRow = JSON.parse(JSON.stringify(src));
+      copy.id = uid('row');
+      copy.opId = nextOpId(d as Workspace, src.fpdId);
+      copy.description = `${src.description} (copy)`;
+      if (copy.children) { copy.children.forEach((c, k) => { c.id = uid('row'); c.opId = `${copy.opId}.${k + 1}`; }); copy.opId = `WB-${copy.opId}`; rollUpBlock(copy); }
+      d.rows.splice(i + 1, 0, copy);
+    });
+  const removeRows = (ids: string[]) => {
+    mutate((d) => { d.rows = d.rows.filter((r) => !ids.includes(r.id)); });
+    setSel(new Set());
+  };
+
+  const selected = ws.rows.filter((r) => sel.has(r.id));
+  const sameFpd = selected.length > 0 && selected.every((r) => r.fpdId === selected[0].fpdId);
+  const canMerge = selected.length >= 2 && sameFpd;
+  const canUnmerge = selected.some(isBlock);
+  const merge = () => {
+    if (!canMerge) return;
+    const ids = new Set(selected.map((r) => r.id));
+    const blockId = uid('row');
+    mutate((d) => {
+      const picked = d.rows.filter((r) => ids.has(r.id));
+      const kids: BopRow[] = picked.flatMap((r) => (r.children?.length ? r.children : [r])).map((k) => ({ ...(JSON.parse(JSON.stringify(k)) as BopRow), children: undefined }));
+      const taken = new Set(d.rows.map((r) => r.opId));
+      let opId = `WB-${kids[0].opId}`;
+      for (let n = 2; taken.has(opId); n++) opId = `WB-${kids[0].opId}/${n}`;
+      const block: BopRow = { ...(JSON.parse(JSON.stringify(kids[0])) as BopRow), id: blockId, opId, description: `Work Block: ${kids[0].description || kids[0].opId} → ${kids[kids.length - 1].description || kids[kids.length - 1].opId}`, taskType: picked[0].taskType, notes: '', children: kids };
+      rollUpBlock(block);
+      const at = d.rows.findIndex((r) => ids.has(r.id));
+      d.rows = d.rows.filter((r) => !ids.has(r.id));
+      d.rows.splice(at, 0, block);
+    });
+    setSel(new Set([blockId]));
+    setOpen((o) => new Set(o).add(blockId));
+    toast('ok', `${selected.length} rows merged into one Work Block. Hours, lifts, moves and tags are rolled up; expand ▸ to see or edit the detail.`);
+  };
+  const unmerge = () => {
+    const ids = new Set(selected.filter(isBlock).map((r) => r.id));
+    mutate((d) => {
+      d.rows = d.rows.flatMap((r) => (ids.has(r.id) && r.children?.length ? r.children.map((c) => ({ ...c, children: undefined })) : [r]));
+    });
+    setSel(new Set());
+  };
+
+  const match = (r: BopRow) => {
+    const calc = m.calcs.get(r.id);
+    const node = m.cpm.nodes.get(r.id);
+    if (cls && !leavesOf(r).some((l) => l.classification === cls)) return false;
+    if (only === 'lift' && !(calc && calc.lifts > 0)) return false;
+    if (only === 'critical' && !node?.critical) return false;
+    if (only === 'ar' && !calc?.arRed) return false;
+    if (only === 'block' && !isBlock(r)) return false;
+    if (q.trim()) {
+      const s = q.toLowerCase();
+      return [r, ...(r.children ?? [])].some((x) => `${x.opId} ${x.description} ${x.notes} ${x.actionType}`.toLowerCase().includes(s));
+    }
+    return true;
+  };
+  const t = m.totals;
+  const totalClass = { VA: t.va, NNVA: t.nnva, NVA: t.nva };
+
+  return (
+    <div>
+      <HowItWorks
+        tab="2"
+        title="Bill of Process — Mergeable KTP Central Spine"
+        steps={[
+          'One row per KTP activity, grouped by FPD. Use the Spine Filter above to isolate an FPD, a cell or the whole factory.',
+          'Enter the three-way time split per build: Bay Run Time, Operator Touch Time and Operator Manning Time. Burden, Elapsed Duration, Ar % and Opportunity Time are calculated.',
+          'Sequential rows follow the row above in the same FPD unless you enter Predecessor # values; Parallel rows start when their listed predecessors finish.',
+          'Tag every rig, crane, rigging item, vehicle and stand the activity needs — the five pickers take any number of items each.',
+          'Tick two or more rows in one FPD and click Merge Selected into Work Block to roll them up. Expand ▸ to edit the folded activities; Unmerge restores them exactly.',
+          'Any row with a Lift Count enters the Lift Register in Tab 8 and is tested against the Tab 1 thresholds.',
+        ]}
+      />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        <Kpi label="Work blocks" guide="merge" value={fmtInt(t.workBlocks)} sub={`${fmtInt(t.activities)} underlying activities`} />
+        <Kpi label="Total labour hours" guide="kpiLabour" value={fmtInt(t.labourHrs)} unit="h / build" sub={`Burden ${fmtInt(t.burdenRaw)} h × ${fmtPct(m.lc * 100, 0)} learning`} />
+        <Kpi label="Value-add ratio" guide="kpiVa" value={fmtPct(t.labourHrs ? (t.va / t.labourHrs) * 100 : 0, 0)} sub={<span className="flex items-center gap-2"><ClassBar byClass={totalClass} width={70} /><span>NNVA {fmtPct(t.labourHrs ? (t.nnva / t.labourHrs) * 100 : 0, 0)} · NVA {fmtPct(t.labourHrs ? (t.nva / t.labourHrs) * 100 : 0, 1)}</span></span>} />
+        <Kpi label="In-station opportunity" guide="opportunity" value={fmtInt(t.opportunityHrs)} unit="h" sub={`Manning ${fmtInt(t.manningHrs)} h − Touch ${fmtInt(t.touchHrs)} h`} />
+        <Kpi label="Operator-locked ops" guide="kpiAr" value={fmtInt(t.arRedCount)} sub={`Ar ≥ ${ws.settings.thresholds.arRedPct}% of ${fmtInt(t.activities)} activities`} rag={t.arRedCount ? 'amber' : 'green'} />
+        <Kpi label="Lifts · moves" guide="kpiLifts" value={`${fmtInt(t.lifts)} · ${fmtInt(t.moves)}`} sub={`${fmtInt(t.interCellMoves)} inter-cell work block(s)`} />
+      </div>
+
+      <div className="card">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
+          <button className="btn-primary" disabled={!canMerge} onClick={merge} title={selected.length >= 2 && !sameFpd ? 'Selected rows must belong to the same FPD' : 'Tick two or more rows in one FPD'}>⊞ Merge Selected into Work Block</button>
+          <Tip id="merge" />
+          <button className="btn" disabled={!canUnmerge} onClick={unmerge}>⊟ Unmerge / expand</button>
+          <button className="btn" disabled={!sel.size} onClick={() => { if (window.confirm(`Delete ${sel.size} selected row(s)?`)) removeRows([...sel]); }}>Delete selected</button>
+          {sel.size > 0 && <span className="text-[12px] tabular-nums text-slate-500">{sel.size} selected <button className="btn-ghost" onClick={() => setSel(new Set())}>clear</button></span>}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />
+            <div className="w-36"><Select value={cls} onChange={setCls} ariaLabel="Classification filter" options={[{ value: '', label: 'All classes' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: c.value }))]} /></div>
+            <div className="w-40"><Select value={only} onChange={setOnly} ariaLabel="Row filter" options={[{ value: '', label: 'All rows' }, { value: 'lift', label: 'Lift ops only' }, { value: 'critical', label: 'Critical path only' }, { value: 'ar', label: 'Ar red only' }, { value: 'block', label: 'Work Blocks only' }]} /></div>
+          </div>
+        </div>
+
+        {m.fpds.length === 0 ? (
+          <div className="p-4"><Empty>No FPDs in the current Spine Filter. Widen the filter above or activate FPDs in Tab 3.</Empty></div>
+        ) : (
+          <div className="scroll-thin overflow-auto" style={{ maxHeight: 'calc(100vh - 215px)', minHeight: 320 }}>
+            <table className="w-max min-w-full border-separate border-spacing-0">
+              <thead className="sticky top-0 z-30">
+                <tr>
+                  <Th className="sticky left-0 z-10" style={{ width: 58, minWidth: 58, maxWidth: 58 }} />
+                  <Th className="sticky left-[58px] z-10" guide="opId" style={{ width: 112, minWidth: 112, maxWidth: 112 }}>Route / Op #</Th>
+                  <Th className="sticky left-[170px] z-10 border-r border-slate-200" guide="description" style={{ width: 300, minWidth: 300, maxWidth: 300 }}>Work Block / Activity Description</Th>
+                  <Th guide="fpdRef">FPD Ref</Th>
+                  <Th guide="cpmBadge">CPM</Th>
+                  <Th guide="taskType">Task Type</Th>
+                  <Th guide="predecessors">Predecessor #</Th>
+                  <Th guide="origin">Origin Cell / Zone</Th>
+                  <Th guide="destination">Destination Cell / Zone</Th>
+                  <Th guide="movement">Movement</Th>
+                  <Th guide="floorLevel">Stand Floor</Th>
+                  <Th guide="component">Component Name / Description</Th>
+                  <Th guide="crew" right>Crew</Th>
+                  <Th guide="runTime" right>Bay Run h</Th>
+                  <Th guide="touchTime" right>Touch h</Th>
+                  <Th guide="manningTime" right>Manning h</Th>
+                  <Th guide="burden" right>Burden h</Th>
+                  <Th guide="elapsed" right>Elapsed h</Th>
+                  <Th guide="ar" right>Ar %</Th>
+                  <Th guide="opportunity" right>Opp. h</Th>
+                  <Th guide="classification">Classification</Th>
+                  <Th guide="actionType">Action Type</Th>
+                  <Th guide="tagRigs">Process Rigs &amp; Tooling</Th>
+                  <Th guide="tagCranes">Cranes</Th>
+                  <Th guide="tagRigging">Rigging &amp; Lifting Gear</Th>
+                  <Th guide="tagVehicles">Transport Vehicles</Th>
+                  <Th guide="tagStands">Build &amp; Storage Stands</Th>
+                  <Th guide="liftCount" right>Lifts</Th>
+                  <Th guide="moveCount" right>Moves</Th>
+                  <Th guide="notes">Engineering Notes</Th>
+                  <Th />
+                </tr>
+              </thead>
+              <tbody>
+                {m.fpds.map((f) => {
+                  const rows = m.rows.filter((r) => r.fpdId === f.fpdId);
+                  const shown = rows.filter(match);
+                  const roll = m.fpdRoll.find((x) => x.fpd.fpdId === f.fpdId);
+                  const cell = ws.cells.find((c) => c.id === f.assignedCellId);
+                  return (
+                    <Fragment key={f.fpdId}>
+                      <tr>
+                        <td colSpan={3} className="sticky left-0 z-20 border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5" style={{ width: 470, minWidth: 470, maxWidth: 470 }}>
+                          <span className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-[12.5px]" title={`${f.fpdCode} — ${f.title}`}>
+                            <b className="text-slate-900">{f.fpdCode}</b><span className="truncate text-slate-700">{f.title}</span><span className="text-[11px] text-slate-500">Rev {f.revision}</span>
+                          </span>
+                        </td>
+                        <td colSpan={28} className="border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5 text-[11.5px] tabular-nums text-slate-600">
+                          <span className="flex items-center gap-3">
+                            <span>{cell ? `Cell ${cell.number} · ${cell.name}` : 'No cell'}</span><span>{f.subAssemblyBomRef}</span>
+                            <span>{fmtInt(rows.length)} work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
+                            <span>{fmtInt(roll?.labourHrs ?? 0)} labour h</span><span>{fmtInt(roll?.lifts ?? 0)} lift(s)</span>
+                            <button className="btn-ghost !text-slate-800" onClick={() => addRow(f.fpdId)}>＋ Add activity</button>
+                          </span>
+                        </td>
+                      </tr>
+                      {shown.map((r) => {
+                        const calc = m.calcs.get(r.id)!;
+                        const block = isBlock(r);
+                        const isOpen = open.has(r.id);
+                        return (
+                          <Fragment key={r.id}>
+                            <BopLine
+                              row={r} calc={calc} node={m.cpm.nodes.get(r.id)} block={block} isOpen={isOpen} selected={sel.has(r.id)} known={known}
+                              onToggleOpen={() => setOpen((o) => { const n = new Set(o); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })}
+                              onSelect={() => setSel((s) => { const n = new Set(s); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })}
+                              onEdit={(fn) => edit(r.id, null, fn)} zoneOpts={zoneOpts} fpdOpts={fpdOpts} cmpOpts={cmpOpts} resOpts={resOpts}
+                              actions={{ up: () => move(r.id, -1), down: () => move(r.id, 1), add: () => addRow(r.fpdId, r.id), dup: () => duplicate(r.id), del: () => removeRows([r.id]) }}
+                            />
+                            {block && isOpen && calc.leaves.map((lc) => (
+                              <BopLine
+                                key={lc.leaf.id} row={lc.leaf} leaf={lc} child block={false} isOpen={false} selected={false} known={known}
+                                onEdit={(fn) => edit(r.id, lc.leaf.id, fn)} zoneOpts={zoneOpts} fpdOpts={fpdOpts} cmpOpts={cmpOpts} resOpts={resOpts}
+                              />
+                            ))}
+                          </Fragment>
+                        );
+                      })}
+                      {shown.length === 0 && (
+                        <tr><td colSpan={31} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : 'No activities yet — use “＋ Add activity”, or Import Excel.'}</td></tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[11.5px] text-slate-500">
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: CLASS_HEX.VA }} />VA</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: CLASS_HEX.NNVA }} />NNVA</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: CLASS_HEX.NVA }} />NVA (pure waste)</span>
+          <span>Hours are per build at baseline; Burden, Elapsed and labour totals apply Build #{ws.settings.learning.selectedBuild} learning ({fmtPct(m.lc * 100, 0)}).</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface LineProps {
+  row: BopRow;
+  calc?: RowCalc;
+  leaf?: LeafCalc;
+  node?: CpmNode;
+  block: boolean;
+  child?: boolean;
+  isOpen: boolean;
+  selected: boolean;
+  known: Map<string, string>;
+  onToggleOpen?: () => void;
+  onSelect?: () => void;
+  onEdit: (fn: (r: Draft<BopRow>) => void) => void;
+  zoneOpts: { value: string; label: string; group?: string }[];
+  fpdOpts: { value: string; label: string }[];
+  cmpOpts: TagOption[];
+  resOpts: Record<ResourceField, TagOption[]>;
+  actions?: { up: () => void; down: () => void; add: () => void; dup: () => void; del: () => void };
+}
+
+function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, known, onToggleOpen, onSelect, onEdit, zoneOpts, fpdOpts, cmpOpts, resOpts, actions }: LineProps) {
+  const { ws } = useStore();
+  const t = ws.settings.thresholds;
+  const ro = block; // Work Block headers are derived from their activities
+  const bg = child ? 'bg-slate-50' : selected ? 'bg-sky-50' : 'bg-white';
+  const burden = leaf ? leaf.burdenRaw : calc!.burdenRaw;
+  const elapsed = leaf ? leaf.elapsedHrs : calc!.elapsedHrs;
+  const arPct = leaf ? leaf.arPct : calc!.arPct;
+  const arRed = leaf ? leaf.arRed : calc!.arRed;
+  const opp = leaf ? leaf.opportunityHrs : calc!.opportunityHrs;
+  const zc = (z: string) => ws.zones.find((x) => x.id === z)?.cellId ?? '';
+  const movement = leaf ? (!zc(r.originZoneId) || !zc(r.destZoneId) ? '—' : zc(r.originZoneId) === zc(r.destZoneId) ? 'Intra-Cell' : 'Inter-Cell') : calc!.movement;
+  const badPreds = r.predecessors.filter((p) => p.trim() && !known.has(p.trim()));
+  const touchBad = r.touchHrs > r.manningHrs + 1e-9;
+  const num = (v: number, d = 1) => <span className="block px-1.5 py-1 text-right tabular-nums text-slate-700">{fmt(v, d)}</span>;
+
+  return (
+    <tr className={`${bg} hover:bg-slate-50`}>
+      <td className={`td sticky left-0 z-20 ${bg}`} style={{ width: 58, minWidth: 58, maxWidth: 58 }}>
+        <span className="flex items-center gap-1 pl-1 pt-1">
+          {child ? <span className="pl-5 text-slate-300">└</span> : (
+            <>
+              <input type="checkbox" className="accent-slate-800" checked={selected} onChange={onSelect} aria-label={`Select ${r.opId}`} />
+              {block ? <button className="w-4 text-[11px] text-slate-600 hover:text-slate-900" onClick={onToggleOpen} aria-expanded={isOpen} aria-label={isOpen ? 'Collapse work block' : 'Expand work block'}>{isOpen ? '▾' : '▸'}</button> : <span className="w-4" />}
+            </>
+          )}
+        </span>
+      </td>
+      <td className={`td sticky left-[58px] z-20 ${bg}`} style={{ width: 112, minWidth: 112, maxWidth: 112 }}><TextInput cell mono value={r.opId} onChange={(v) => onEdit((d) => { d.opId = v.trim(); })} ariaLabel="Op #" /></td>
+      <td className={`td sticky left-[170px] z-20 border-r border-slate-200 ${bg}`} style={{ width: 300, minWidth: 300, maxWidth: 300 }}>
+        <div className="flex items-start gap-1">
+          {block && <span className="mt-1 shrink-0"><Pill tone="blue" title="Merged KTP Work Block">⊞ {r.children!.length}</Pill></span>}
+          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : 250} /></div>
+        </div>
+      </td>
+      <td className="td" style={{ minWidth: 96 }}>
+        {child ? <span className="block px-1.5 py-1 text-slate-400">↳ in block</span> : <Select cell value={r.fpdId} options={fpdOpts} ariaLabel="FPD Ref" onChange={(v) => onEdit((d) => { d.fpdId = v; d.children?.forEach((c) => { c.fpdId = v; }); })} />}
+      </td>
+      <td className="td"><span className="block px-1 py-1">{child ? null : <CpmBadge node={node} nearHrs={t.nearCriticalFloatHrs} />}</span></td>
+      <td className="td" style={{ minWidth: 104 }}>
+        {child ? <span className="block px-1.5 py-1 text-slate-400">Serial in block</span> : <Select cell value={r.taskType} ariaLabel="Task type" options={[{ value: 'Sequential', label: 'Sequential' }, { value: 'Parallel', label: 'Parallel' }]} onChange={(v) => onEdit((d) => { d.taskType = v; })} />}
+      </td>
+      <td className="td" style={{ minWidth: 130 }}>
+        {ro ? <span className="block px-1.5 py-1 font-mono text-[12px] text-slate-600" title="Inherited from the folded activities">{r.predecessors.join(', ') || 'None'}</span> : (
+          <>
+            <TextInput cell mono value={r.predecessors.join(', ')} placeholder={node?.implicitPred ? 'None (follows above)' : 'None'} ariaLabel="Predecessors" onChange={(v) => onEdit((d) => { d.predecessors = [...new Set(v.split(/[,;\s]+/).map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== 'none'))]; })} className={badPreds.length ? '!border-red-400' : ''} />
+            {badPreds.length > 0 && <span className="block px-1.5 pb-0.5 text-[10.5px] text-red-700">Unknown: {badPreds.join(', ')}</span>}
+          </>
+        )}
+      </td>
+      <td className="td" style={{ minWidth: 170 }}>{ro ? <RoText>{zoneOpts.find((z) => z.value === r.originZoneId)?.label}</RoText> : <Select cell value={r.originZoneId} options={zoneOpts} ariaLabel="Origin zone" onChange={(v) => onEdit((d) => { d.originZoneId = v; })} />}</td>
+      <td className="td" style={{ minWidth: 170 }}>{ro ? <RoText>{zoneOpts.find((z) => z.value === r.destZoneId)?.label}</RoText> : <Select cell value={r.destZoneId} options={zoneOpts} ariaLabel="Destination zone" onChange={(v) => onEdit((d) => { if (d.originZoneId === d.destZoneId || !d.originZoneId) d.originZoneId = v; d.destZoneId = v; })} />}</td>
+      <td className="td"><span className="block px-1 py-1">{movement === '—' ? <span className="text-slate-400">—</span> : <Pill tone={movement === 'Inter-Cell' ? 'blue' : 'outline'}>{movement}</Pill>}</span></td>
+      <td className="td" style={{ minWidth: 92 }}>{ro ? <RoText>{FLOOR_LEVELS[r.floorLevel]}</RoText> : <Select cell value={r.floorLevel} ariaLabel="Stand floor level" options={FLOOR_LEVELS.map((l, i) => ({ value: i, label: l }))} onChange={(v) => onEdit((d) => { d.floorLevel = v; })} />}</td>
+      <td className="td"><TagPicker label="Components" value={r.componentIds} options={cmpOpts} readOnly={ro} minWidth={190} onChange={(v) => onEdit((d) => { d.componentIds = v; })} /></td>
+      <td className="td w-[52px]">{ro ? num(r.crewSize, 0) : <NumInput cell value={r.crewSize} min={1} max={99} ariaLabel="Crew size" onChange={(v) => onEdit((d) => { d.crewSize = Math.max(1, Math.round(v ?? 1)); })} />}</td>
+      <td className="td w-[70px]">{ro ? num(r.runHrs) : <NumInput cell value={r.runHrs} min={0} ariaLabel="Run time hours" onChange={(v) => onEdit((d) => { d.runHrs = v ?? 0; })} />}</td>
+      <td className="td w-[70px]">{ro ? num(r.touchHrs) : <NumInput cell value={r.touchHrs} min={0} ariaLabel="Touch time hours" className={touchBad ? '!border-red-400' : ''} onChange={(v) => onEdit((d) => { d.touchHrs = v ?? 0; })} />}</td>
+      <td className="td w-[74px]">{ro ? num(r.manningHrs) : <NumInput cell value={r.manningHrs} min={0} ariaLabel="Manning time hours" onChange={(v) => onEdit((d) => { d.manningHrs = v ?? 0; })} />}</td>
+      <td className="td-ro text-right text-slate-700" title="Manning Time × Crew Size">{fmt(burden, 1)}</td>
+      <td className="td-ro text-right font-medium text-slate-900" title="Max(Run, Manning) ÷ Net Active Factor × Learning Curve">{fmt(elapsed, 1)}</td>
+      <td className="td-ro text-right">{arPct == null ? <span className="text-slate-400">—</span> : arRed ? <RagBadge rag="red" label={fmtPct(arPct, 0)} title="Operator locked to the bay for the whole cycle" /> : <span className="text-slate-700">{fmtPct(arPct, 0)}</span>}</td>
+      <td className="td-ro text-right text-slate-700">{fmt(opp, 1)}</td>
+      <td className="td" style={{ minWidth: 150 }}>
+        {ro ? <span className="flex items-center gap-1.5 px-1.5 py-1.5"><ClassBar byClass={calc!.byClass} width={64} /><span className="text-[11px] text-slate-500">{CLASS_SHORT[r.classification]}</span></span> : (
+          <span className="flex items-center gap-1"><span className="ml-1 inline-block h-2.5 w-1.5 shrink-0 rounded-sm" style={{ backgroundColor: CLASS_HEX[r.classification] }} /><Select cell value={r.classification} ariaLabel="Action classification" options={CLASSIFICATIONS.map((c) => ({ value: c.value, label: CLASS_LONG[c.value] }))} onChange={(v) => onEdit((d) => { d.classification = v; })} /></span>
+        )}
+      </td>
+      <td className="td" style={{ minWidth: 128 }}>{ro ? <RoText>{r.actionType}</RoText> : <Select cell value={r.actionType} ariaLabel="Specific action type" options={ACTION_TYPES.map((a) => ({ value: a, label: a }))} onChange={(v) => onEdit((d) => { d.actionType = v; if (v === 'Lifting' && d.liftCount === 0) d.liftCount = 1; })} />}</td>
+      {RESOURCE_KINDS.map((k) => (
+        <td key={k.kind} className="td"><TagPicker label={k.plural} value={r[k.field]} options={resOpts[k.field]} readOnly={ro} onChange={(v) => onEdit((d) => { d[k.field] = v; })} /></td>
+      ))}
+      <td className="td w-[54px]">{ro ? num(r.liftCount, 0) : <NumInput cell value={r.liftCount} min={0} ariaLabel="Lift count" onChange={(v) => onEdit((d) => { d.liftCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
+      <td className="td w-[54px]">{ro ? num(r.moveCount, 0) : <NumInput cell value={r.moveCount} min={0} ariaLabel="Move count" onChange={(v) => onEdit((d) => { d.moveCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
+      <td className="td"><ExpandableTextCell value={r.notes} onChange={(v) => onEdit((d) => { d.notes = v; })} label="Engineering Notes" context={`${r.opId} · ${r.description}`} minWidth={200} /></td>
+      <td className="td">
+        {actions && (
+          <span className="flex items-center whitespace-nowrap pt-0.5">
+            <button className="btn-ghost" title="Move up within FPD" onClick={actions.up}>▲</button>
+            <button className="btn-ghost" title="Move down within FPD" onClick={actions.down}>▼</button>
+            <button className="btn-ghost" title="Insert activity below" onClick={actions.add}>＋</button>
+            <button className="btn-ghost" title="Duplicate" onClick={actions.dup}>⧉</button>
+            <button className="btn-ghost" title="Delete row" onClick={actions.del}>✕</button>
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+const RoText = ({ children }: { children?: React.ReactNode }) => <span className="block truncate px-1.5 py-1 text-slate-600">{children || '—'}</span>;
