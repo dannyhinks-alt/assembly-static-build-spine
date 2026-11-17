@@ -190,7 +190,6 @@ function TopBar() {
                 <MenuItem onClick={() => { setMenu(false); window.print(); }}>Print current tab</MenuItem>
                 <div className="my-1 border-t border-slate-100" />
                 <MenuItem onClick={() => { setMenu(false); if (window.confirm('Clear the workspace to a blank state? All FPDs, BOP rows, PFMEA entries, and layout data will be removed. (Undo will bring it back.)')) st.resetToBlank(); }}>Clear / Blank Workspace</MenuItem>
-                <MenuItem onClick={() => { setMenu(false); if (window.confirm('Replace the current workspace with the PMA / UMA baseline dataset? (Undo will bring it back.)')) st.resetToSeed(); }}>Restore PMA / UMA baseline dataset</MenuItem>
               </div>
             </>
           )}

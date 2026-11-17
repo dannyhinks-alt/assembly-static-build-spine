@@ -234,7 +234,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const resetToSeed = useCallback(() => {
     replace(seedWorkspace());
     setScope(FACTORY_SCOPE);
-    toast('ok', 'PMA / UMA baseline dataset restored. Undo brings your previous workspace back.');
+    toast('ok', 'Workspace reset to blank. Undo brings your previous workspace back.');
   }, [replace, setScope, toast]);
 
   const resetToBlank = useCallback(() => {

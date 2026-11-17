@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, Empty, HowItWorks, Kpi, Meter, NumInput, Pill, RagBadge, Select, Th, Tip } from '../components/primitives';
 import { intraZoneAllowanceM, zonePoint } from '../engine/space';
 import { polygonArea } from '../lib/geometry';
@@ -15,11 +15,17 @@ export default function Tab7Footprint() {
   const { lengthM: L, widthM: W } = ws.settings.envelope;
   const cells = useMemo(() => [...ws.cells].sort((a, b) => a.number - b.number), [ws.cells]);
   const [view, setView] = useState<'factory' | 'cell'>('factory');
-  const [cellId, setCellId] = useState(cells.find((c) => c.number === 4)?.id ?? cells[0]?.id ?? '');
+  const [cellId, setCellId] = useState(cells[0]?.id ?? '');
+  useEffect(() => {
+    if (!cellId || !cells.find((c) => c.id === cellId)) setCellId(cells[0]?.id ?? '');
+  }, [cells, cellId]);
   const [state, setState] = useState<'current' | 'future' | 'both'>('both');
   const [showFlows, setShowFlows] = useState(true);
   const [showPinch, setShowPinch] = useState(true);
   const [showElev, setShowElev] = useState(true);
+  const [elevImgMode, setElevImgMode] = useState<'behind' | 'side'>('behind');
+  const elevImgRef = useRef<HTMLInputElement>(null);
+  const sideElevImage = ws.layout.sideElevationImage ?? null;
   const sp = m.space;
   const zoneName = (id: string) => ws.zones.find((z) => z.id === id)?.name ?? '—';
   const zoneCell = (id: string) => ws.zones.find((z) => z.id === id)?.cellId ?? '';
@@ -192,9 +198,10 @@ export default function Tab7Footprint() {
         right={
           <>
             <div className="inline-flex overflow-hidden rounded border border-slate-300 bg-white" role="radiogroup" aria-label="Layout view">
-              {([['factory', 'Full Factory · Inter-Cell'], ['cell', 'Single Cell · Intra-Cell']] as const).map(([v, label]) => (
-                <button key={v} role="radio" aria-checked={view === v} onClick={() => setView(v)} className={`border-r border-slate-300 px-2.5 py-1 text-[12px] font-medium last:border-r-0 ${view === v ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{label}</button>
-              ))}
+              {([['factory', 'Full Factory · Inter-Cell'], ['cell', 'Single Cell · Intra-Cell']] as const).map(([v, label]) => {
+                const disabled = v === 'cell' && cells.length === 0;
+                return <button key={v} role="radio" aria-checked={view === v} disabled={disabled} title={disabled ? 'Add at least one Cell in Tab 1 first' : undefined} onClick={() => setView(v)} className={`border-r border-slate-300 px-2.5 py-1 text-[12px] font-medium last:border-r-0 ${view === v ? 'bg-slate-900 text-white' : disabled ? 'cursor-not-allowed text-slate-400' : 'text-slate-600 hover:bg-slate-100'}`}>{label}</button>;
+              })}
             </div>
             {view === 'cell' && <div className="w-56"><Select value={cellId} onChange={setCellId} ariaLabel="Cell" options={cells.map((c) => ({ value: c.id, label: `Cell ${c.number} · ${c.name}` }))} /></div>}
             <div className="inline-flex overflow-hidden rounded border border-slate-300 bg-white" role="radiogroup" aria-label="Layout state">
@@ -308,10 +315,32 @@ export default function Tab7Footprint() {
 
       {showElev && (
         <Card className="mt-4" title="2D Side-Elevation X–Z — Multi-Floor Stand & Crane Lift Window" guide="sideElevation"
-          right={stands.length > 0 ? <div className="w-64"><Select value={stand?.id ?? ''} onChange={setStandSel} ariaLabel="Stand" options={stands.map((s) => ({ value: s.id, label: s.name }))} /></div> : undefined}>
-          {!stand ? <Empty>No lifts are tagged to a stand in the current Spine Filter. Tag the stand on lift rows in Tab 2.</Empty> : (
+          right={<>
+            {stands.length > 0 && <div className="w-64"><Select value={stand?.id ?? ''} onChange={setStandSel} ariaLabel="Stand" options={stands.map((s) => ({ value: s.id, label: s.name }))} /></div>}
+            <input ref={elevImgRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => {
+              const f = e.target.files?.[0]; if (!f) return;
+              const reader = new FileReader();
+              reader.onload = () => mutate((d) => { d.layout.sideElevationImage = reader.result as string; });
+              reader.readAsDataURL(f);
+              e.target.value = '';
+            }} />
+            <button className="btn" onClick={() => elevImgRef.current?.click()}>Upload Side-View Image (PNG / JPG)…</button>
+            {sideElevImage && <>
+              <button className="btn" title="Remove side-view image" onClick={() => mutate((d) => { d.layout.sideElevationImage = null; })}>Remove image</button>
+              <div className="inline-flex overflow-hidden rounded border border-slate-300 bg-white" role="radiogroup" aria-label="Image display mode">
+                {(['behind', 'side'] as const).map((m) => (
+                  <button key={m} role="radio" aria-checked={elevImgMode === m} onClick={() => setElevImgMode(m)} className={`border-r border-slate-300 px-2 py-1 text-[12px] font-medium last:border-r-0 ${elevImgMode === m ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{m === 'behind' ? 'Behind Chart' : 'Side-by-Side'}</button>
+                ))}
+              </div>
+            </>}
+          </>}>
+          {!stand && !sideElevImage ? <Empty>No lifts are tagged to a stand in the current Spine Filter. Tag the stand on lift rows in Tab 2.</Empty> : (
             <>
-              <svg viewBox={`0 0 ${EW} ${EH}`} className="w-full" role="img" aria-label={`Side elevation of ${stand.name}`}>
+              <div className={sideElevImage && elevImgMode === 'side' ? 'flex gap-4' : undefined}>
+              {sideElevImage && elevImgMode === 'side' && <img src={sideElevImage} alt="Side-view reference" className="max-h-80 w-1/2 object-contain rounded border border-slate-200 self-start" />}
+              {stand && <div className={`relative ${sideElevImage && elevImgMode === 'side' ? 'flex-1' : ''}`}>
+              {sideElevImage && elevImgMode === 'behind' && <img src={sideElevImage} alt="Side-view reference" className="absolute inset-0 h-full w-full object-contain opacity-20 pointer-events-none" />}
+              <svg viewBox={`0 0 ${EW} ${EH}`} className="w-full relative" role="img" aria-label={`Side elevation of ${stand.name}`}>
                 {Array.from({ length: Math.floor(zMax) + 1 }, (_, i) => i).map((z) => (<g key={z}><line x1={EL} x2={EW - 120} y1={ez(z)} y2={ez(z)} stroke="#eef2f6" /><text x={EL - 54} y={ez(z) + 3.5} fontSize={11} textAnchor="end" fill="#94a3b8">{z} m</text></g>))}
                 {Array.from({ length: tiers + 1 }, (_, k) => k).map((k) => (
                   <g key={k}>
@@ -346,14 +375,16 @@ export default function Tab7Footprint() {
                   );
                 })}
               </svg>
-              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-slate-600">
+              </div>}
+              </div>
+              {stand && <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-slate-600">
                 <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-4 rounded-sm" style={{ backgroundColor: '#334155' }} />Component at landing level</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2 rounded-sm" style={{ backgroundColor: '#64748b' }} />Rigging headroom</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-4 rounded-sm border border-dashed border-slate-400 bg-slate-200" />Clearance margin</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-0 w-5 border-t-2 border-slate-900" />Required hook height</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-0 w-5 border-t-2 border-dashed border-slate-900" />Crane hook limit</span>
                 <span className="ml-auto">{stand.name}: {tiers} floor(s) at {fmt(tierH, 2)} m · {sLifts.length} lift op(s) · {sLifts.filter((l) => l.hookBreach).length} breach(es). Columns are in schedule order; hover for the stack-up.</span>
-              </div>
+              </div>}
             </>
           )}
         </Card>

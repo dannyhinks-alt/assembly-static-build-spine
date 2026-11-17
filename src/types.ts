@@ -280,6 +280,8 @@ export interface Layout {
   floors?: FloorPlan[];
   /** Manual override for total factory floor area (m²). Null = use envelope L × W. */
   floorAreaOverrideM2?: number | null;
+  /** Data-URL for a side-view reference photograph shown in the Side-Elevation card. */
+  sideElevationImage?: string | null;
 }
 
 // ---------- Settings ----------

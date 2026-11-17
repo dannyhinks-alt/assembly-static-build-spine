@@ -3,7 +3,7 @@ import { defaultSettings, seedWorkspace } from '../data/seed';
 import type { BopRow, Workspace } from '../types';
 import { APP_VERSION, WORKSPACE_SCHEMA } from '../types';
 
-export const LS_KEY = 'asbcs.workspace.v1';
+export const LS_KEY = 'asbcs.workspace.v2';
 export const LS_SCOPE = 'asbcs.scope.v1';
 export const LS_TAB = 'asbcs.tab.v1';
 
@@ -91,12 +91,14 @@ export function normaliseWorkspace(raw: unknown): Workspace {
       snapM: typeof layout.snapM === 'number' ? layout.snapM : 0.5,
       floors: arr(layout.floors),
       floorAreaOverrideM2: layout.floorAreaOverrideM2 ?? null,
+      sideElevationImage: layout.sideElevationImage ?? null,
     },
   };
 }
 
 export function loadLocal(): Workspace | null {
   try {
+    localStorage.removeItem('asbcs.workspace.v1');
     const s = localStorage.getItem(LS_KEY);
     return s ? normaliseWorkspace(JSON.parse(s)) : null;
   } catch {

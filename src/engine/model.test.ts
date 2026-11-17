@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { seedWorkspace } from '../data/seed';
 import { FACTORY_SCOPE } from '../types';
 import { buildModel, learningFactor, rollUpBlock } from './model';
 import { buildSummary } from './gates';
 import { runIntegrity } from './integrity';
+import { baselineFixture } from './testFixture';
 
 describe('baseline dataset', () => {
-  const ws = seedWorkspace();
+  const ws = baselineFixture();
   it('learning curve steps 130 → 110 over four reductions', () => {
     const l = ws.settings.learning;
     expect([1, 2, 3, 4, 5, 6].map((b) => Math.round(learningFactor(l, b) * 100))).toEqual([130, 125, 120, 115, 110, 110]);
@@ -36,7 +36,7 @@ describe('baseline dataset', () => {
     expect(manual.every((l) => l.arPct === null && !l.arRed)).toBe(true);
     expect(leaves.filter((l) => l.arRed).map((l) => l.leaf.opId)).toEqual(['F5-070']);
     // 4 min cycle is below the 5 min floor; 6 min cycle with Manning ≥ Run is locked
-    const w = seedWorkspace();
+    const w = baselineFixture();
     const r = w.rows.find((x) => x.opId === 'F1-010')!;
     Object.assign(r, { runHrs: 4 / 60, manningHrs: 1 });
     expect(buildModel(w, FACTORY_SCOPE).calcs.get(r.id)!.arRed).toBe(false);
@@ -96,13 +96,13 @@ describe('baseline dataset', () => {
     expect(rep.checks.filter((c) => !c.pass).map((c) => c.key)).toEqual(['assumptions']);
   });
   it('detects a predecessor loop', () => {
-    const w = seedWorkspace();
+    const w = baselineFixture();
     w.rows.find((r) => r.opId === 'F1-010')!.predecessors = ['F8-060'];
     const rep = runIntegrity(w);
     expect(rep.checks.find((c) => c.key === 'cycle')!.pass).toBe(false);
   });
   it('merging activities into a Baseline Work Block preserves hours, lifts and critical path', () => {
-    const w = seedWorkspace();
+    const w = baselineFixture();
     const before = buildModel(w, FACTORY_SCOPE);
     const kids = w.rows.filter((r) => ['F2-020', 'F2-030', 'F2-040'].includes(r.opId));
     const block = { ...structuredClone(kids[0]), id: 'blk', description: 'Block', children: structuredClone(kids) };

@@ -206,18 +206,28 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
 
   // ---- BOP ----
   if (S.bop) {
+    // Auto-create a default cell if none exist so zone auto-creation has somewhere to anchor.
+    if (ws.cells.length === 0) {
+      ws.cells.push({ id: uid('cell'), number: 1, name: 'Main Assembly', crewPerShift: 2, notes: '' });
+    }
     const c = count('BOP activities');
     const zoneOf = (v: unknown, op: string): string => {
       const s = str(v);
-      if (!s) return '';
+      if (!s || s.toLowerCase() === 'none') return '';
       const z = ws.zones.find((x) => x.name.toLowerCase() === s.toLowerCase() || x.id.toLowerCase() === s.toLowerCase())
         ?? ws.zones.find((x) => x.name.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(x.name.toLowerCase()));
       if (z) return z.id;
       const cell = cellByNumber(s);
       const first = ws.zones.find((x) => x.cellId === cell);
       if (first) return first.id;
-      warnings.push(`${op}: zone "${s}" not recognised — left blank.`);
-      return '';
+      // Auto-create the zone under the first cell.
+      const codeMatch = s.match(/^Zone\s+([A-Z0-9]+)\s*[·\-–]\s*(.*)/i);
+      const zoneName = codeMatch ? codeMatch[2].trim() || s : s;
+      const zoneCode = codeMatch ? codeMatch[1].toUpperCase() : undefined;
+      const newZone = { id: uid('zone'), cellId: ws.cells[0].id, name: zoneName, code: zoneCode, pos: null, futurePos: null, maxCrewPerLevel: null };
+      ws.zones.push(newZone);
+      warnings.push(`${op}: zone "${s}" not found — created automatically under Cell 1 (edit in Tab 1).`);
+      return newZone.id;
     };
     const classOf = (v: unknown): Classification => { const s = str(v).toUpperCase(); return /NNVA|NECESSARY/.test(s) ? 'NNVA' : /NVA|WASTE/.test(s) ? 'NVA' : 'VA'; };
     const actionOf = (v: unknown): ActionType => {
