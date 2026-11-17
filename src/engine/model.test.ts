@@ -101,7 +101,7 @@ describe('baseline dataset', () => {
     const rep = runIntegrity(w);
     expect(rep.checks.find((c) => c.key === 'cycle')!.pass).toBe(false);
   });
-  it('merging activities into a Work Block preserves hours, lifts and critical path', () => {
+  it('merging activities into a Baseline Work Block preserves hours, lifts and critical path', () => {
     const w = seedWorkspace();
     const before = buildModel(w, FACTORY_SCOPE);
     const kids = w.rows.filter((r) => ['F2-020', 'F2-030', 'F2-040'].includes(r.opId));

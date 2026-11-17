@@ -203,7 +203,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const next = normaliseWorkspace(JSON.parse(text));
       replace(next);
-      toast('ok', `Loaded ${name}: ${next.fpds.length} FPDs, ${next.rows.length} work blocks. Undo restores the previous workspace.`);
+      toast('ok', `Loaded ${name}: ${next.fpds.length} FPDs, ${next.rows.length} Baseline work blocks. Undo restores the previous workspace.`);
     } catch (e) {
       toast('error', `Import failed — ${(e as Error).message}`);
     }

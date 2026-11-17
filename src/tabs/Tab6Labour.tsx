@@ -95,7 +95,7 @@ export default function Tab6Labour() {
         }
       >
         {nodes.length === 0 ? (
-          <div className="p-4"><Empty>No work blocks in the current Spine Filter.</Empty></div>
+          <div className="p-4"><Empty>No Baseline work blocks in the current Spine Filter.</Empty></div>
         ) : (
           <div className="scroll-thin relative overflow-auto" style={{ maxHeight: 640 }} onMouseLeave={() => setTip(null)}>
             <div className="relative min-w-[900px]">
@@ -250,7 +250,7 @@ export default function Tab6Labour() {
         pad={false}
         right={
           <>
-            <div className="w-44"><Select value={show} onChange={setShow} ariaLabel="Rows shown" options={[{ value: 'all', label: 'All work blocks' }, { value: 'near', label: 'Critical + near-critical' }, { value: 'critical', label: 'Critical only' }]} /></div>
+            <div className="w-44"><Select value={show} onChange={setShow} ariaLabel="Rows shown" options={[{ value: 'all', label: 'All Baseline work blocks' }, { value: 'near', label: 'Critical + near-critical' }, { value: 'critical', label: 'Critical only' }]} /></div>
             <div className="w-36"><Select value={unit} onChange={setUnit} ariaLabel="Time unit" options={[{ value: 'd', label: 'Working days' }, { value: 'h', label: 'Elapsed hours' }]} /></div>
           </>
         }

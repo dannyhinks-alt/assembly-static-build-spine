@@ -30,7 +30,7 @@ export interface ParsedWorkbook { fileName: string; sheets: Record<string, Row[]
 const SHEET_KINDS: [RegExp, string][] = [
   [/pfmea|fmea|risk/i, 'pfmea'],
   [/fpd|document|registry/i, 'fpds'],
-  [/bop|bill.?of.?process|process|ktp|activit/i, 'bop'],
+  [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],  // 'ktp' kept for legacy sheet names
   [/component|bom|part/i, 'components'],
   [/resource|equipment|crane|tool/i, 'resources'],
 ];
@@ -217,7 +217,7 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
         c.added++;
       } else c.updated++;
       row.fpdId = fpd.fpdId;
-      row.description = str(col(r, 'Description', 'Activity Description', 'Work Block / Activity Description', 'Activity')) || row.description;
+      row.description = str(col(r, 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Work Block / Activity Description', 'Activity')) || row.description;
       row.taskType = /par/i.test(str(col(r, 'Task Type', 'Type'))) ? 'Parallel' : 'Sequential';
       row.predecessors = list(col(r, 'Predecessors', 'Predecessor #', 'Predecessor', 'Pred'));
       row.destZoneId = zoneOf(col(r, 'Destination Zone', 'Destination', 'Dest Zone', 'Destination Cell / Zone'), op) || row.destZoneId;
@@ -307,7 +307,7 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
   for (const r of take(ws.rows))
     for (const l of leavesOf(r))
       bop.push({
-        'FPD Code': fpd(l.fpdId), 'Op #': l.opId, 'Work Block': r.children?.length ? r.opId : '', Description: l.description, 'Task Type': l.taskType, Predecessors: l.predecessors.join(', '),
+        'FPD Code': fpd(l.fpdId), 'Op #': l.opId, 'Baseline Work Block': r.children?.length ? r.opId : '', Description: l.description, 'Task Type': l.taskType, Predecessors: l.predecessors.join(', '),
         'Origin Zone': zone(l.originZoneId), 'Destination Zone': zone(l.destZoneId), 'Floor Level': FLOOR_LEVELS[l.floorLevel] ?? 'Ground',
         Components: l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.bomRef ?? '').filter(Boolean).join('; '), 'Crew Size': l.crewSize,
         'Run Time (hrs)': l.runHrs, 'Touch Time (hrs)': l.touchHrs, 'Manning Time (hrs)': l.manningHrs, Classification: l.classification, 'Action Type': l.actionType,
@@ -326,7 +326,7 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
   if (!template) {
     const t = m.totals;
     const kv: [string, string | number][] = [
-      ['Workspace', ws.meta.name], ['Exported', new Date().toLocaleString('en-GB')], ['Scope', `${m.fpds.length} of ${ws.fpds.length} FPDs · ${t.workBlocks} work blocks`],
+      ['Workspace', ws.meta.name], ['Exported', new Date().toLocaleString('en-GB')], ['Scope', `${m.fpds.length} of ${ws.fpds.length} FPDs · ${t.workBlocks} Baseline work blocks`],
       ['Build #', ws.settings.learning.selectedBuild], ['Learning factor', +m.lc.toFixed(3)], ['Critical path (months)', +m.durationMonths.toFixed(2)],
       ['Production window — nominal (months)', +m.windowNominal.toFixed(2)], ['Production window — peak (months)', +m.windowPeak.toFixed(2)],
       ['Labour hours per build', +t.labourHrs.toFixed(1)], ['Labour cost per build (£)', Math.round(t.labourCost)], ['VA %', +(t.labourHrs ? (t.va / t.labourHrs) * 100 : 0).toFixed(1)],

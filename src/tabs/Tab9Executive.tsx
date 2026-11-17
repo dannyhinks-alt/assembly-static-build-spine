@@ -94,7 +94,7 @@ export default function Tab9Executive() {
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Critical-path duration" guide="kpiCp" value={fmt(m.durationMonths, 1)} unit="months" sub={`${fmt(m.durationDays, 0)} working days · Build #${ws.settings.learning.selectedBuild} at ${fmtPct(m.lc * 100, 0)}`} rag={m.rows.length ? m.scheduleRag : undefined} />
         <Kpi label="Window utilisation" guide="kpiWindow" value={fmtPct(m.windowRatio * 100, 0)} sub={`${fmt(m.windowActive, 1)}-month window · drumbeat ${fmt(ws.settings.programme.drumbeatMonths, 0)} months`} rag={m.rows.length ? m.scheduleRag : undefined} />
-        <Kpi label="Total labour hours" guide="kpiLabour" value={fmtInt(t.labourHrs)} unit="h / build" sub={`${fmtInt(t.workBlocks)} work blocks · peak crew ${fmtInt(m.peakCrew)}`} />
+        <Kpi label="Total labour hours" guide="kpiLabour" value={fmtInt(t.labourHrs)} unit="h / build" sub={`${fmtInt(t.workBlocks)} Baseline work blocks · peak crew ${fmtInt(m.peakCrew)}`} />
         <Kpi label="Labour cost per build" guide="kpiCost" value={fmtGbp(t.labourCost)} sub={`at ${fmtGbp(ws.settings.programme.labourRateGbp)} / h`} />
         <Kpi label="Value-add ratio" guide="kpiVa" value={fmtPct(t.labourHrs ? (t.va / t.labourHrs) * 100 : 0, 0)} sub={<span className="flex items-center gap-2"><ClassBar byClass={{ VA: t.va, NNVA: t.nnva, NVA: t.nva }} width={70} />NVA {fmtPct(t.labourHrs ? (t.nva / t.labourHrs) * 100 : 0, 1)}</span>} />
         <Kpi label="Lifts per build" guide="kpiLifts" value={fmtInt(t.lifts)} sub={`${nLift((l) => l.heavy)} heavy op(s) · ${nLift((l) => l.rag === 'red')} Red`} rag={m.lifts.length ? liftRag : undefined} />
@@ -122,8 +122,8 @@ export default function Tab9Executive() {
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <Card title="Labour Content per Work Block" guide="chartLabour" right={<span className="flex items-center gap-3 text-[11.5px] text-slate-600">{(['VA', 'NNVA', 'NVA'] as const).map((k) => <span key={k} className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: CLS[k] }} />{k}</span>)}</span>}>
-          {topBlocks.length === 0 ? <Empty>No work blocks in the current Spine Filter.</Empty> : (
+        <Card title="Labour Content per Baseline Work Block" guide="chartLabour" right={<span className="flex items-center gap-3 text-[11.5px] text-slate-600">{(['VA', 'NNVA', 'NVA'] as const).map((k) => <span key={k} className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: CLS[k] }} />{k}</span>)}</span>}>
+          {topBlocks.length === 0 ? <Empty>No Baseline work blocks in the current Spine Filter.</Empty> : (
             <div className="space-y-1.5">
               {topBlocks.map((c) => (
                 <div key={c.row.id} className="grid grid-cols-[84px_minmax(0,1fr)_64px] items-center gap-2" title={`${c.row.opId} — ${c.row.description}\n${fmtInt(c.labourHrs)} labour h: VA ${fmtInt(c.byClass.VA)} · NNVA ${fmtInt(c.byClass.NNVA)} · NVA ${fmtInt(c.byClass.NVA)}\nCrew ${c.crewMax} · elapsed ${fmtInt(c.elapsedHrs)} h`}>
@@ -137,7 +137,7 @@ export default function Tab9Executive() {
               {restHrs > 0 && <div className="grid grid-cols-[84px_minmax(0,1fr)_64px] items-center gap-2 text-[12px] text-slate-500"><span>{blocks.length - 12} others</span><span className="h-3 rounded-sm bg-slate-100"><span className="block h-3 rounded-sm bg-slate-300" style={{ width: `${Math.min(100, (restHrs / maxBlock) * 100)}%` }} /></span><span className="text-right tabular-nums">{fmtInt(restHrs)} h</span></div>}
             </div>
           )}
-          <p className="mt-2 text-[11.5px] text-slate-500">The top {topBlocks.length} of {blocks.length} work blocks hold {fmtPct(topShare, 0)} of the labour hours. Hover a bar for the split.</p>
+          <p className="mt-2 text-[11.5px] text-slate-500">The top {topBlocks.length} of {blocks.length} Baseline work blocks hold {fmtPct(topShare, 0)} of the labour hours. Hover a bar for the split.</p>
         </Card>
 
         <Card title="High-Risk Resource Utilisation" guide="chartUtil" right={<span className="text-[11.5px] text-slate-600">Ticks: Amber {th.dutyAmberPct}% · Serious {th.dutySeriousPct}%</span>}>

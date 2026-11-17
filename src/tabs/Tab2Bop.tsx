@@ -127,7 +127,7 @@ export default function Tab2Bop() {
       const taken = new Set(d.rows.map((r) => r.opId));
       let opId = `WB-${kids[0].opId}`;
       for (let n = 2; taken.has(opId); n++) opId = `WB-${kids[0].opId}/${n}`;
-      const block: BopRow = { ...(JSON.parse(JSON.stringify(kids[0])) as BopRow), id: blockId, opId, description: `Work Block: ${kids[0].description || kids[0].opId} → ${kids[kids.length - 1].description || kids[kids.length - 1].opId}`, taskType: picked[0].taskType, notes: '', children: kids };
+      const block: BopRow = { ...(JSON.parse(JSON.stringify(kids[0])) as BopRow), id: blockId, opId, description: `Baseline Work Block: ${kids[0].description || kids[0].opId} → ${kids[kids.length - 1].description || kids[kids.length - 1].opId}`, taskType: picked[0].taskType, notes: '', children: kids };
       rollUpBlock(block);
       const at = d.rows.findIndex((r) => ids.has(r.id));
       d.rows = d.rows.filter((r) => !ids.has(r.id));
@@ -135,7 +135,7 @@ export default function Tab2Bop() {
     });
     setSel(new Set([blockId]));
     setOpen((o) => new Set(o).add(blockId));
-    toast('ok', `${selected.length} rows merged into one Work Block. Hours, lifts, moves and tags are rolled up; expand ▸ to see or edit the detail.`);
+    toast('ok', `${selected.length} rows merged into one Baseline Work Block. Hours, lifts, moves and tags are rolled up; expand ▸ to see or edit the detail.`);
   };
   const unmerge = () => {
     const ids = new Set(selected.filter(isBlock).map((r) => r.id));
@@ -167,13 +167,13 @@ export default function Tab2Bop() {
     <div>
       <HowItWorks
         tab="2"
-        title="Bill of Process — Mergeable KTP Central Spine"
+        title="Bill of Process — Mergeable Baseline Central Spine"
         steps={[
-          'One row per KTP activity, grouped by FPD. Use the Spine Filter above to isolate an FPD, a cell or the whole factory.',
+          'One row per Baseline activity, grouped by FPD. Use the Spine Filter above to isolate an FPD, a cell or the whole factory.',
           'Enter the three-way time split per build: Bay Run Time, Operator Touch Time and Operator Manning Time. Leave Bay Run Time at 0 for hand work — the row then reads "Manual op" rather than an Attendance Ratio.',
           'Sequential rows follow the row above in the same FPD unless you enter Predecessor # values; Parallel rows start when their listed predecessors finish.',
           'Tag every rig, crane, rigging item, vehicle and stand the activity needs — the five pickers take any number of items each.',
-          'Tick two or more rows in one FPD and click Merge Selected into Work Block to roll them up. Expand ▸ to edit the folded activities; Unmerge restores them exactly.',
+          'Tick two or more rows in one FPD and click Merge Selected into Baseline Work Block to roll them up. Expand ▸ to edit the folded activities; Unmerge restores them exactly.',
           'Any row with a Lift Count enters the Lift Register in Tab 4. Open the Multi-FPD Registry above the table to add, clone or deactivate FPDs.',
         ]}
       />
@@ -184,14 +184,14 @@ export default function Tab2Bop() {
         <Kpi label="Value-add ratio" guide="kpiVa" value={fmtPct(t.labourHrs ? (t.va / t.labourHrs) * 100 : 0, 0)} sub={<span className="flex items-center gap-2"><ClassBar byClass={totalClass} width={70} /><span>NNVA {fmtPct(t.labourHrs ? (t.nnva / t.labourHrs) * 100 : 0, 0)} · NVA {fmtPct(t.labourHrs ? (t.nva / t.labourHrs) * 100 : 0, 1)}</span></span>} />
         <Kpi label="In-station opportunity" guide="opportunity" value={fmtInt(t.opportunityHrs)} unit="h" sub={`Manning ${fmtInt(t.manningHrs)} h − Touch ${fmtInt(t.touchHrs)} h`} />
         <Kpi label="Machine-locked labour" guide="kpiAr" value={fmtInt(t.arRedCount)} sub={`${fmtInt(manualOps)} manual op(s) with no equipment cycle`} rag={t.arRedCount ? 'red' : 'green'} />
-        <Kpi label="Lifts · moves" guide="kpiLifts" value={`${fmtInt(t.lifts)} · ${fmtInt(t.moves)}`} sub={`${fmtInt(t.interCellMoves)} inter-cell work block(s)`} />
+        <Kpi label="Lifts · moves" guide="kpiLifts" value={`${fmtInt(t.lifts)} · ${fmtInt(t.moves)}`} sub={`${fmtInt(t.interCellMoves)} inter-cell Baseline work block(s)`} />
       </div>
 
       <FpdRegistryCard className="mb-4" />
 
       <div className="card">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
-          <button className="btn-primary" disabled={!canMerge} onClick={merge} title={selected.length >= 2 && !sameFpd ? 'Selected rows must belong to the same FPD' : 'Tick two or more rows in one FPD'}>⊞ Merge Selected into Work Block</button>
+          <button className="btn-primary" disabled={!canMerge} onClick={merge} title={selected.length >= 2 && !sameFpd ? 'Selected rows must belong to the same FPD' : 'Tick two or more rows in one FPD'}>⊞ Merge Selected into Baseline Work Block</button>
           <Tip id="merge" />
           <button className="btn" disabled={!canUnmerge} onClick={unmerge}>⊟ Unmerge / expand</button>
           <button className="btn" disabled={!sel.size} onClick={() => { if (window.confirm(`Delete ${sel.size} selected row(s)?`)) removeRows([...sel]); }}>Delete selected</button>
@@ -199,7 +199,7 @@ export default function Tab2Bop() {
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />
             <div className="w-36"><Select value={cls} onChange={setCls} ariaLabel="Classification filter" options={[{ value: '', label: 'All classes' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: c.value }))]} /></div>
-            <div className="w-40"><Select value={only} onChange={setOnly} ariaLabel="Row filter" options={[{ value: '', label: 'All rows' }, { value: 'lift', label: 'Lift ops only' }, { value: 'critical', label: 'Critical path only' }, { value: 'ar', label: 'Machine-locked only' }, { value: 'block', label: 'Work Blocks only' }]} /></div>
+            <div className="w-40"><Select value={only} onChange={setOnly} ariaLabel="Row filter" options={[{ value: '', label: 'All rows' }, { value: 'lift', label: 'Lift ops only' }, { value: 'critical', label: 'Critical path only' }, { value: 'ar', label: 'Machine-locked only' }, { value: 'block', label: 'Baseline Work Blocks only' }]} /></div>
           </div>
         </div>
 
@@ -212,7 +212,7 @@ export default function Tab2Bop() {
                 <tr>
                   <Th className="sticky left-0 z-10" style={{ width: 58, minWidth: 58, maxWidth: 58 }} />
                   <Th className="sticky left-[58px] z-10" guide="opId" style={{ width: 112, minWidth: 112, maxWidth: 112 }}>Route / Op #</Th>
-                  <Th className="sticky left-[170px] z-10 border-r border-slate-200" guide="description" style={{ width: 300, minWidth: 300, maxWidth: 300 }}>Work Block / Activity Description</Th>
+                  <Th className="sticky left-[170px] z-10 border-r border-slate-200" guide="description" style={{ width: 300, minWidth: 300, maxWidth: 300 }}>Baseline Work Block / Activity Description</Th>
                   <Th guide="fpdRef">FPD Ref</Th>
                   <Th guide="cpmBadge">CPM</Th>
                   <Th guide="taskType">Task Type</Th>
@@ -260,7 +260,7 @@ export default function Tab2Bop() {
                         <td colSpan={28} className="border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5 text-[11.5px] tabular-nums text-slate-600">
                           <span className="flex items-center gap-3">
                             <span>{cell ? `Cell ${cell.number} · ${cell.name}` : 'No cell'}</span><span>{f.subAssemblyBomRef}</span>
-                            <span>{fmtInt(rows.length)} work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
+                            <span>{fmtInt(rows.length)} Baseline work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
                             <span>{fmtInt(roll?.labourHrs ?? 0)} labour h</span><span>{fmtInt(roll?.lifts ?? 0)} lift(s)</span>
                             <button className="btn-ghost !text-slate-800" onClick={() => addRow(f.fpdId)}>＋ Add activity</button>
                           </span>
@@ -332,7 +332,7 @@ interface LineProps {
 function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, known, onToggleOpen, onSelect, onEdit, zoneOpts, fpdOpts, cmpOpts, resOpts, actions }: LineProps) {
   const { ws } = useStore();
   const t = ws.settings.thresholds;
-  const ro = block; // Work Block headers are derived from their activities
+  const ro = block; // Baseline Work Block headers are derived from their activities
   const bg = child ? 'bg-slate-50' : selected ? 'bg-sky-50' : 'bg-white';
   const burden = leaf ? leaf.burdenRaw : calc!.burdenRaw;
   const elapsed = leaf ? leaf.elapsedHrs : calc!.elapsedHrs;
@@ -352,7 +352,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
           {child ? <span className="pl-5 text-slate-300">└</span> : (
             <>
               <input type="checkbox" className="accent-slate-800" checked={selected} onChange={onSelect} aria-label={`Select ${r.opId}`} />
-              {block ? <button className="w-4 text-[11px] text-slate-600 hover:text-slate-900" onClick={onToggleOpen} aria-expanded={isOpen} aria-label={isOpen ? 'Collapse work block' : 'Expand work block'}>{isOpen ? '▾' : '▸'}</button> : <span className="w-4" />}
+              {block ? <button className="w-4 text-[11px] text-slate-600 hover:text-slate-900" onClick={onToggleOpen} aria-expanded={isOpen} aria-label={isOpen ? 'Collapse Baseline work block' : 'Expand Baseline work block'}>{isOpen ? '▾' : '▸'}</button> : <span className="w-4" />}
             </>
           )}
         </span>
@@ -360,8 +360,8 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className={`td sticky left-[58px] z-20 ${bg}`} style={{ width: 112, minWidth: 112, maxWidth: 112 }}><TextInput cell mono value={r.opId} onChange={(v) => onEdit((d) => { d.opId = v.trim(); })} ariaLabel="Op #" /></td>
       <td className={`td sticky left-[170px] z-20 border-r border-slate-200 ${bg}`} style={{ width: 300, minWidth: 300, maxWidth: 300 }}>
         <div className="flex items-start gap-1">
-          {block && <span className="mt-1 shrink-0"><Pill tone="blue" title="Merged KTP Work Block">⊞ {r.children!.length}</Pill></span>}
-          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : 250} /></div>
+          {block && <span className="mt-1 shrink-0"><Pill tone="blue" title="Merged Baseline Work Block">⊞ {r.children!.length}</Pill></span>}
+          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Baseline Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : 250} /></div>
         </div>
       </td>
       <td className="td" style={{ minWidth: 96 }}>

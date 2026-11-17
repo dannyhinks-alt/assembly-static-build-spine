@@ -41,11 +41,11 @@ export function FpdRegistryCard({ className = '' }: { className?: string }) {
       }
       d.rows.push(...copies);
     });
-    toast('ok', `${src.fpdCode} cloned to ${code} with its work blocks. Internal predecessor links were re-pointed to the copies.`);
+    toast('ok', `${src.fpdCode} cloned to ${code} with its Baseline work blocks. Internal predecessor links were re-pointed to the copies.`);
   };
   const deleteFpd = (f: Fpd) => {
     const n = ws.rows.filter((r) => r.fpdId === f.fpdId).length;
-    if (!window.confirm(`Delete ${f.fpdCode} and its ${n} work block(s)? PFMEA items and hold points are kept but unlinked.`)) return;
+    if (!window.confirm(`Delete ${f.fpdCode} and its ${n} Baseline work block(s)? PFMEA items and hold points are kept but unlinked.`)) return;
     mutate((d) => {
       d.fpds = d.fpds.filter((x) => x.fpdId !== f.fpdId);
       d.rows = d.rows.filter((r) => r.fpdId !== f.fpdId);
@@ -82,7 +82,7 @@ export function FpdRegistryCard({ className = '' }: { className?: string }) {
         </>
       }
     >
-      <DataTable cols={cols} rows={ws.fpds} rowKey={(f) => f.fpdId} onClone={cloneFpd} cloneTitle="Clone FPD with its work blocks" onDelete={deleteFpd} maxHeight={420} rowClass={(f) => (f.active ? '' : 'opacity-55')} empty="No FPDs — add one or import from Excel." />
+      <DataTable cols={cols} rows={ws.fpds} rowKey={(f) => f.fpdId} onClone={cloneFpd} cloneTitle="Clone FPD with its Baseline work blocks" onDelete={deleteFpd} maxHeight={420} rowClass={(f) => (f.active ? '' : 'opacity-55')} empty="No FPDs — add one or import from Excel." />
     </Card>
   );
 }

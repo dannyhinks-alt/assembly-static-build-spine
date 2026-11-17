@@ -99,8 +99,8 @@ export function runIntegrity(ws: Workspace): IntegrityReport {
     }
     if (!close(run, r.runHrs) || !close(touch, r.touchHrs) || !close(man, r.manningHrs) || lifts !== r.liftCount || moves !== r.moveCount) bad.push(r.opId);
   }
-  add('merge', 'Merged KTP Work Blocks reconcile exactly to their activities', bad.length === 0,
-    blocks ? `${blocks} Work Block(s) reconcile on hours, lifts and moves.` : 'No merged Work Blocks — nothing to reconcile.',
+  add('merge', 'Merged Baseline Work Blocks reconcile exactly to their activities', bad.length === 0,
+    blocks ? `${blocks} Baseline Work Block(s) reconcile on hours, lifts and moves.` : 'No merged Baseline Work Blocks — nothing to reconcile.',
     `Header ≠ sum of activities on: ${list(bad)}. Unmerge and re-merge to rebuild.`);
 
   // 6 — independent labour-hours recalculation

@@ -344,7 +344,7 @@ function SpineFilterBar() {
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Pill tone="dark">
-            <span className="tabular-nums">{fmtInt(model.fpds.length)} of {fmtInt(ws.fpds.length)} FPDs active · {fmtInt(model.totals.workBlocks)} work blocks</span>
+            <span className="tabular-nums">{fmtInt(model.fpds.length)} of {fmtInt(ws.fpds.length)} FPDs active · {fmtInt(model.totals.workBlocks)} Baseline work blocks</span>
           </Pill>
           <Pill tone="outline" title="Learning-curve build selected in Tab 1">Build #{ws.settings.learning.selectedBuild} · {(model.lc * 100).toFixed(0)}%</Pill>
           <RagBadge rag={model.scheduleRag} label={`${model.durationMonths.toFixed(1)} mo`} title="Critical-path duration vs production window (Tab 7)" />

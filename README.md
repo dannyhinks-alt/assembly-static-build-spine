@@ -35,7 +35,7 @@ is bundled into the file.
 | # | Tab | Contents |
 |---|-----|----------|
 | 1 | Targets & Pre-Requisites | Cadence, learning curve, calendar, crane envelope, lift thresholds, 10-point integrity, assumptions, cells / zones / crew, floor-layout importer |
-| 2 | Bill of Process | Multi-FPD Registry and the mergeable KTP spine |
+| 2 | Bill of Process | Multi-FPD Registry and the mergeable Baseline spine |
 | 3 | Equipment, Tooling, Vehicles & Stands | Five registers, 1–3 Complexity Scoring Matrix, floor claims, utility services |
 | 4 | Component, Lift & Movement Analysis | Six lift counters, per-lift SWL and hook-height stack-up, movement register, From–To matrix, component register |
 | 5 | Cell & Process PFMEA | Multiple failure modes per activity, High-Severity Blind-Spot Watch, control-document check, assigned equipment, hold points |
@@ -81,14 +81,14 @@ Two UI primitives are used everywhere (`src/components/primitives.tsx`):
 | Cell utilisation | `labour h per build × annual demand ÷ (crew per shift × annual hours)` |
 | RPN | `S × O × D`, banded by the Tab 1 thresholds |
 
-A **Work Block** is a merged group of activities in one FPD. Its header is the roll-up of its children (treated as
+A **Baseline Work Block** is a merged group of activities in one FPD. Its header is the roll-up of its children (treated as
 a serial chain); children keep their own times, classification, tags and lift data, so lift checks and VA / NNVA /
 NVA splits are unchanged by merging. Unmerge restores the rows exactly.
 
 ### 10-point integrity self-test (`integrity.ts`)
 
 1 no predecessor loops · 2 predecessor references resolve · 3 unique Op # · 4 weights on lift ops ·
-5 Work Blocks reconcile to activities · 6 independent labour-hours recalculation · 7 independent critical-path
+5 Baseline Work Blocks reconcile to activities · 6 independent labour-hours recalculation · 7 independent critical-path
 recalculation (memoised longest path vs forward pass) · 8 independent lift count · 9 time logic and reference
 integrity · 10 assumptions confirmed. Checks 6–8 use separate code from the main engine.
 

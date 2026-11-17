@@ -155,7 +155,7 @@ export interface BopRow {
   liftCount: number;
   moveCount: number;
   notes: string;
-  /** Present when this row is a merged KTP Work Block. Children keep full detail. */
+  /** Present when this row is a merged Baseline Work Block. Children keep full detail. */
   children?: BopRow[];
 }
 

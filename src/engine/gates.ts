@@ -45,7 +45,7 @@ export function computeGates(ws: Workspace, m: Model, integ: IntegrityReport): G
   add('Schedule vs Production Window', 'gate2', m.rows.length ? m.scheduleRag : 'amber',
     m.rows.length
       ? `Critical path ${m.durationMonths.toFixed(1)} months = ${(m.windowRatio * 100).toFixed(0)}% of the ${m.windowActive.toFixed(1)}-month window; drumbeat ${ws.settings.programme.drumbeatMonths.toFixed(1)} months.`
-      : 'No work blocks in the current filter.', 6);
+      : 'No Baseline work blocks in the current filter.', 6);
 
   const redLifts = m.lifts.filter((l) => l.rag === 'red');
   const serLifts = m.lifts.filter((l) => l.rag === 'serious');
