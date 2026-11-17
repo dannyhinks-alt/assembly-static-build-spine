@@ -1,7 +1,7 @@
 ## 1. Quick Start for Engineers (Offline Usage)
 
 1. **Download the Latest Offline App (1-Click Direct Link):**
-   - Open: `https://github.com`
+   - Open: `https://github.com/dannyhinks-alt/assembly-static-build-spine/raw/main/dist-offline/index.html`
    - *(If transferring via corporate email, rename `index.html` to `index.txt`, send it, then rename back to `index.html`.)*
 2. **Open in Microsoft Edge or Chrome:**
    - Double-click `index.html` locally—runs 100% offline with zero internet or CDN calls.
