@@ -55,6 +55,7 @@ export function CellsZonesCards() {
         right={<button className="btn-primary" onClick={() => mutate((d) => { const n = Math.max(0, ...d.cells.map((c) => c.number)) + 1; d.cells.push({ id: uid('cell'), number: n, name: `Cell ${n}`, crewPerShift: 2, notes: '' }); })}>＋ Add cell</button>}>
         <DataTable
           cols={cellCols} rows={ws.cells} rowKey={(c) => c.id}
+          empty="No cells yet. Add a cell for each physical work area in the factory (e.g. PMA Bay, Final Assembly). Each cell groups zones, resources and FPDs, and drives the per-cell space and crew analysis in Tabs 7–9."
           onDelete={(c) => {
             const z = ws.zones.filter((x) => x.cellId === c.id).length;
             const f = ws.fpds.filter((x) => x.assignedCellId === c.id).length;
@@ -73,6 +74,7 @@ export function CellsZonesCards() {
         right={<button className="btn-primary" disabled={!ws.cells.length} onClick={() => mutate((d) => { d.zones.push({ id: uid('zone'), cellId: d.cells[0].id, name: 'New zone', pos: null, futurePos: null, maxCrewPerLevel: null }); })}>＋ Add zone</button>}>
         <DataTable
           cols={zoneCols} rows={ws.zones} rowKey={(z) => z.id}
+          empty="No zones yet. Zones are named station points inside a cell (e.g. 'Station 10 · Wing Build'). Set their (X, Y) coordinates or draw cell polygons in the floor plan — Tab 7 uses them to calculate spaghetti travel distances between activities."
           onDelete={(z) => {
             const n = zoneUse(z.id);
             if (n && !window.confirm(`${z.name} is used by ${n} activit${n === 1 ? 'y' : 'ies'}. Delete it and clear those zone links?`)) return;

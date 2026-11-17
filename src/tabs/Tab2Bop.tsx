@@ -236,8 +236,8 @@ export default function Tab2Bop() {
                   <Th guide="classification">Classification</Th>
                   <Th guide="actionType">Action Type</Th>
                   <Th guide="tagRigs">Tooling &amp; Equipment</Th>
-                  <Th right>Baseline h</Th>
-                  <Th right>Variance h</Th>
+                  <Th right guide="baselineHrs">Baseline h</Th>
+                  <Th right guide="baselineHrs">Variance h</Th>
                   <Th guide="tagCranes">Cranes</Th>
                   <Th guide="tagRigging">Rigging &amp; Lifting Gear</Th>
                   <Th guide="tagVehicles">Transport Vehicles</Th>
@@ -294,7 +294,7 @@ export default function Tab2Bop() {
                         );
                       })}
                       {shown.length === 0 && (
-                        <tr><td colSpan={31} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : 'No activities yet — use “＋ Add activity”, or Import Excel.'}</td></tr>
+                        <tr><td colSpan={31} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : <span>No activities yet. Use <b>+ Add activity</b> to build manually, or <b>Import Excel</b> (Master BOP &amp; PFMEA Combined sheet) to load in bulk. Column mapping: Phase = FPD, Route Code = Op, Labour Content = Manning, Crew Density = Crew, Zone = Destination Zone.</span>}</td></tr>
                       )}
                     </Fragment>
                   );

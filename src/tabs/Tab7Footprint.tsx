@@ -107,6 +107,25 @@ export default function Tab7Footprint() {
     x.futurePos = next;
   });
 
+  // ---- spaghetti readiness ----
+  const flowingZoneIds = useMemo(() => new Set(sp.moves.flatMap((m) => [m.fromZoneId, m.toZoneId])), [sp.moves]);
+  const unpositioned = useMemo(() => ws.zones.filter((z) => !zonePoint(ws, z.id, false) && flowingZoneIds.has(z.id)), [ws, flowingZoneIds]);
+  const autoPlace = () => {
+    const toPlace = ws.zones.filter((z) => !z.pos && !ws.layout.shapes.find((s) => s.target === `cell:${z.cellId}`));
+    if (!toPlace.length) return;
+    const cols = Math.ceil(Math.sqrt(toPlace.length));
+    const rows = Math.ceil(toPlace.length / cols);
+    mutate((d) => {
+      toPlace.forEach((z, i) => {
+        const col = i % cols, row = Math.floor(i / cols);
+        const x = +(L / (cols + 1) * (col + 1)).toFixed(1);
+        const y = +(W / (rows + 1) * (row + 1)).toFixed(1);
+        const dz = d.zones.find((q) => q.id === z.id)!;
+        dz.pos = [x, y];
+      });
+    });
+  };
+
   // ---- footprint ----
   const total = ws.layout.floorAreaOverrideM2 ?? (L * W);
   const allocated = cells.reduce((a, c) => a + cellArea(c.id), 0) + ws.layout.shapes.filter((s) => s.target === 'stores' || s.target === 'dispatch').reduce((a, s) => a + polygonArea(s.points), 0);
@@ -144,6 +163,19 @@ export default function Tab7Footprint() {
         ]}
       />
 
+      {unpositioned.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-900">
+          <div className="flex-1">
+            <span className="font-semibold">Spaghetti Flow Readiness <Tip id="flowReadiness" /></span>
+            {' — '}
+            <span>{unpositioned.length} zone{unpositioned.length > 1 ? 's' : ''} in BOP move data have no (X, Y) station point and will be invisible on the diagram: </span>
+            <span className="font-mono">{unpositioned.map((z) => z.name.split('·')[0].trim()).join(', ')}</span>
+            <span>. Set positions in Tab 1 or use the auto-place helper.</span>
+          </div>
+          <button className="btn shrink-0 border-amber-400 bg-amber-100 hover:bg-amber-200" onClick={autoPlace}>Auto-Place Unpositioned Zones on Grid</button>
+        </div>
+      )}
+
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <Kpi label="Spaghetti — current" guide="spaghetti" value={fmtInt(sp.spaghettiM)} unit="m / build" sub={`${fmtInt(sp.interCellMoves + sp.intraCellMoves)} moves`} />
         <Kpi label="Spaghetti — future" guide="spaghettiFuture" value={fmtInt(sp.spaghettiFutureM)} unit="m / build" sub={`${fmtInt(ws.zones.filter((z) => z.futurePos).length)} zone(s) re-sited`} />
@@ -170,7 +202,7 @@ export default function Tab7Footprint() {
                 <button key={v} role="radio" aria-checked={state === v} onClick={() => setState(v)} className={`border-r border-slate-300 px-2.5 py-1 text-[12px] font-medium capitalize last:border-r-0 ${state === v ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{v}</button>
               ))}
             </div>
-            <label className="flex items-center gap-1 text-[12px] text-slate-600"><input type="checkbox" className="accent-slate-800" checked={showFlows} onChange={(e) => setShowFlows(e.target.checked)} />Spaghetti</label>
+            <label className="flex items-center gap-1 text-[12px] text-slate-600"><input type="checkbox" className="accent-slate-800" checked={showFlows} onChange={(e) => setShowFlows(e.target.checked)} />Material Flows (Spaghetti)<Tip id="flowReadiness" /></label>
             <label className="flex items-center gap-1 text-[12px] text-slate-600"><input type="checkbox" className="accent-slate-800" checked={showPinch} onChange={(e) => setShowPinch(e.target.checked)} />3D pinch points<Tip id="pinchOverlay" /></label>
             <label className="flex items-center gap-1 text-[12px] text-slate-600"><input type="checkbox" className="accent-slate-800" checked={showElev} onChange={(e) => setShowElev(e.target.checked)} />Side elevation<Tip id="sideElevation" /></label>
           </>
@@ -330,7 +362,7 @@ export default function Tab7Footprint() {
       <Card className="mt-4" title="Footprint & Space by Cell" guide="floorClaim" pad={false}>
         <div className="scroll-thin overflow-auto">
           <table className="w-full min-w-max">
-            <thead><tr><Th>Cell</Th><Th right guide="shapeArea">Area m²</Th><Th right>Share of factory</Th><Th right guide="floorClaim">Equipment claim m²</Th><Th guide="floorClaim">Claimed</Th><Th right>Free m²</Th><Th right guide="cellCrew">Crew / shift</Th><Th right>m² per operator</Th><Th>Space verdict</Th><Th right guide="pinchOverlay">Pinch points</Th><Th>Zones</Th></tr></thead>
+            <thead><tr><Th>Cell</Th><Th right guide="shapeArea">Area m²</Th><Th right>Share of factory</Th><Th right guide="floorClaim">Equipment claim m²</Th><Th guide="floorClaim">Claimed</Th><Th right>Free m²</Th><Th right guide="cellCrew">Crew / shift</Th><Th right>m² per operator</Th><Th guide="spaceVerdict">Space verdict</Th><Th right guide="pinchOverlay">Pinch points</Th><Th>Zones</Th></tr></thead>
             <tbody>
               {cells.map((c) => {
                 const area = cellArea(c.id);
@@ -357,7 +389,7 @@ export default function Tab7Footprint() {
           </table>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[11.5px] text-slate-500">
-          <span>Equipment claim = footprint × quantity of resources homed in the cell (Tab 3). Cell shapes are drawn or imported in Tab 1.</span>
+          <span>Equipment claim = footprint × quantity of resources homed in the cell (Tab 3). Cell shapes are drawn or imported in Tab 1. <b>Under-utilised</b> cells (&lt;20% claimed) carry a hidden consolidation opportunity — fewer large cells reduce gangway walk distances. <Tip id="spaceVerdict" /></span>
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
             <Pill tone="outline">Boundary {fmt(L, 0)} × {fmt(W, 0)} m</Pill>
             <Pill tone="outline">{fmtInt(total - allocated)} m² gangways &amp; unallocated</Pill>

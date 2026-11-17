@@ -140,7 +140,7 @@ export default function Tab4Lifts() {
                   </tr>
                 );
               })}
-              {!lifts.length && <tr><td colSpan={15} className="td-ro py-6 text-center text-slate-500">{m.lifts.length ? 'No lifts match this view.' : 'No lift operations in the current Spine Filter.'}</td></tr>}
+              {!lifts.length && <tr><td colSpan={15} className="td-ro py-6 text-center text-slate-500">{m.lifts.length ? 'No lifts match this view.' : 'No lift operations in the current Spine Filter. Tag a Crane on activity rows in Tab 2 (or set Lift Count ≥ 1) and each lift will appear here with its SWL, hook-height and risk-flag checks pre-computed.'}</td></tr>}
             </tbody>
           </table>
         </div>
