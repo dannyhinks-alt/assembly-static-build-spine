@@ -116,17 +116,11 @@ export default function Tab1Targets() {
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <Card title="Crane Envelope & Configurable Lift / Pinch-Point Thresholds">
-          <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Primary Crane SWL" guide="craneSwl" unit="kg" hint={`${fmt(s.crane.primarySwlKg / 1000, 1)} t`}><NumInput value={s.crane.primarySwlKg} min={0} onChange={(v) => set((d) => { d.crane.primarySwlKg = n(v); })} /></Field>
-            <Field label="Vertical Hook Height" guide="hookHeight" unit="m"><NumInput value={s.crane.hookHeightM} min={0} onChange={(v) => set((d) => { d.crane.hookHeightM = n(v); })} /></Field>
-            <Field label="Safety Lift Clearance Margin" guide="clearance" unit="m"><NumInput value={s.crane.clearanceMarginM} min={0} onChange={(v) => set((d) => { d.crane.clearanceMarginM = n(v); })} /></Field>
-            <Field label="Average Lift Cycle" guide="avgLiftCycle" unit="h"><NumInput value={s.crane.avgLiftCycleHrs} min={0} onChange={(v) => set((d) => { d.crane.avgLiftCycleHrs = n(v); })} /></Field>
-            <Field label="Default Stand Floor Height" guide="tierHeight" unit="m"><NumInput value={s.crane.defaultTierHeightM} min={0} onChange={(v) => set((d) => { d.crane.defaultTierHeightM = n(v); })} /></Field>
-            <Field label="Default Rigging Headroom" guide="riggingHeadroom" unit="m"><NumInput value={s.crane.defaultRiggingHeadroomM} min={0} onChange={(v) => set((d) => { d.crane.defaultRiggingHeadroomM = n(v); })} /></Field>
-            <Field label="Tandem Lift Derate" guide="tandemDerate" unit="%"><NumInput value={s.crane.tandemDeratePct} min={0} max={90} onChange={(v) => set((d) => { d.crane.tandemDeratePct = n(v); })} /></Field>
+        <Card title="Configurable Lift / Pinch-Point Thresholds">
+          <div className="mb-3 flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] text-slate-600">
+            <span>Crane Envelope &amp; Lifting Defaults (SWL, hook heights, rigging headroom, derate %) have moved to</span>
+            <button className="btn-ghost" onClick={() => setTab(3)}>Tab 3 — Equipment, Tooling, Vehicles &amp; Stands →</button>
           </div>
-
           <div className="mt-4 border-t border-slate-200 pt-3">
             <div className="mb-2 text-[12.5px] font-semibold text-slate-900">Configurable Pinch-Point &amp; Lift Risk Thresholds</div>
             <div className="grid gap-3 sm:grid-cols-2">

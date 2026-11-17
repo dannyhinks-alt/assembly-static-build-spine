@@ -215,6 +215,28 @@ const rows: BopRow[] = [
 
 const rect = (x1: number, y1: number, x2: number, y2: number): [number, number][] => [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
 
+/** A completely empty workspace — no FPDs, no rows, no PFMEA, no components, no resources. */
+export function blankWorkspace(): Workspace {
+  const now = new Date().toISOString();
+  return {
+    schema: WORKSPACE_SCHEMA,
+    meta: { name: 'New Workspace', factoryId: 'F1', factoryName: 'Factory 1', createdAt: now, updatedAt: now, appVersion: APP_VERSION },
+    settings: defaultSettings(),
+    cells: [],
+    zones: [],
+    fpds: [],
+    components: [],
+    resources: [],
+    rows: [],
+    pfmea: [],
+    holdPoints: [],
+    assumptions: [],
+    gateSignoffs: {},
+    mitigations: {},
+    layout: { snapM: 0.5, image: null, shapes: [] },
+  };
+}
+
 export function seedWorkspace(): Workspace {
   const now = new Date().toISOString();
   return {

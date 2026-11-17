@@ -1,11 +1,12 @@
+import type { Draft } from 'immer';
 import { DataTable, type Col } from '../components/DataTable';
-import { Card, ExpandableTextCell, HowItWorks, Kpi, Meter, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip } from '../components/primitives';
+import { Card, ExpandableTextCell, Field, HowItWorks, Kpi, Meter, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip } from '../components/primitives';
 import { blankResource } from '../data/seed';
 import { dutyRag } from '../engine/model';
 import { polygonArea } from '../lib/geometry';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
 import { useStore } from '../store';
-import type { Complexity, Rag, Resource, ResourceKind } from '../types';
+import type { Complexity, Rag, Resource, ResourceKind, Settings } from '../types';
 import { COMPLEXITY_CRITERIA, RESOURCE_KINDS, UTILITY_SERVICES, complexityOf, complexityScore, floorClaimM2, uid } from '../types';
 
 const CX_TONE: Record<Complexity, 'outline' | 'slate' | 'dark'> = { Simple: 'outline', Medium: 'slate', Complex: 'dark' };
@@ -19,7 +20,10 @@ export function ComplexityPill({ r }: { r: Pick<Resource, 'complexity'> }) {
 export default function Tab3Equipment() {
   const { ws, mutate, model: m, setTab } = useStore();
   const upd = (id: string, fn: (r: Resource) => void) => mutate((d) => { const r = d.resources.find((x) => x.id === id); if (r) fn(r); });
-  const cellOpts = [{ value: '', label: 'Shared / none' }, ...ws.cells.map((c) => ({ value: c.id, label: `Cell ${c.number}` }))];
+  const set = (fn: (d: Draft<Settings>) => void) => mutate((d) => fn(d.settings));
+  const n = (v: number | null, fallback = 0) => v ?? fallback;
+  const s = ws.settings;
+  const cellOpts = [{ value: '', label: 'Shared / none' }, ...ws.cells.map((c) => ({ value: c.id, label: c.name ? `${c.number} · ${c.name}` : `Cell ${c.number}` }))];
   const load = (id: string) => m.resources.find((x) => x.resource.id === id);
   const t = ws.settings.thresholds;
   const utilOpts = [...new Set([...UTILITY_SERVICES, ...ws.resources.flatMap((r) => r.utilities)])].map((u) => ({ id: u, label: u }));
@@ -84,16 +88,31 @@ export default function Tab3Equipment() {
 
   return (
     <div>
+      <Card className="mb-4" title="Crane Envelope & Lifting Defaults" guide="craneSwl">
+        <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Primary Crane SWL" guide="craneSwl" unit="kg" hint={`${fmt(s.crane.primarySwlKg / 1000, 1)} t`}><NumInput value={s.crane.primarySwlKg} min={0} onChange={(v) => set((d) => { d.crane.primarySwlKg = n(v); })} /></Field>
+          <Field label="Default Vertical Hook Height" guide="hookHeight" unit="m"><NumInput value={s.crane.hookHeightM} min={0} onChange={(v) => set((d) => { d.crane.hookHeightM = n(v); })} /></Field>
+          <Field label="Safety Lift Clearance Margin" guide="clearance" unit="m"><NumInput value={s.crane.clearanceMarginM} min={0} onChange={(v) => set((d) => { d.crane.clearanceMarginM = n(v); })} /></Field>
+          <Field label="Average Lift Cycle" guide="avgLiftCycle" unit="h"><NumInput value={s.crane.avgLiftCycleHrs} min={0} onChange={(v) => set((d) => { d.crane.avgLiftCycleHrs = n(v); })} /></Field>
+          <Field label="Default Stand Floor Height" guide="tierHeight" unit="m"><NumInput value={s.crane.defaultTierHeightM} min={0} onChange={(v) => set((d) => { d.crane.defaultTierHeightM = n(v); })} /></Field>
+          <Field label="Default Rigging Headroom (additive per item)" guide="riggingHeadroom" unit="m"><NumInput value={s.crane.defaultRiggingHeadroomM} min={0} onChange={(v) => set((d) => { d.crane.defaultRiggingHeadroomM = n(v); })} /></Field>
+          <Field label="Tandem Lift Derate" guide="tandemDerate" unit="%"><NumInput value={s.crane.tandemDeratePct} min={0} max={90} onChange={(v) => set((d) => { d.crane.tandemDeratePct = n(v); })} /></Field>
+        </div>
+        <p className="mt-2 text-[11.5px] text-slate-500">
+          Per-crane hook heights are entered in the <b>Cranes</b> register below. Rigging headroom values are summed additively across all tagged items (additive stack-up). Thresholds are set in <button className="underline hover:text-slate-800" onClick={() => setTab(1)}>Tab 1</button>.
+        </p>
+      </Card>
+
       <HowItWorks
         tab="3"
         title="Equipment, Tooling, Vehicles & Stands"
         steps={[
-          'Five registers — process rigs, cranes, rigging, vehicles and stands — feed the five tag pickers on every BOP row in Tab 2.',
+          'Five registers — Tooling & Equipment, Cranes, Rigging, Vehicles, and Stands — feed the five tag pickers on every BOP row in Tab 2.',
           'Score each item on the 1–3 Complexity Matrix (click a score to change it). The four scores are summed: 4–6 Simple, 7–9 Medium, 10–12 Complex.',
           'A Complex-class item tagged on a lift raises the Complex Lift flag in Tab 4.',
           'Enter footprint length and width; floor claims are totalled by home cell and compared with the cell area from the Tab 1 layout.',
           'Tag the utility services each item needs to build the services-by-cell matrix for Facilities.',
-          'Cranes need SWL and hook height, rigging needs WLL, headroom and tare, stands need tiers and tier height — all are used by the lift checks.',
+          'Cranes need SWL and hook height per crane row; rigging headroom values are SUMMED (additive stack-up) across all tagged items on a lift — enter each item\'s true consumed height.',
         ]}
       />
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

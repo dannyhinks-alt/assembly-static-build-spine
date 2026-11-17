@@ -189,6 +189,7 @@ function TopBar() {
                 {fsaSupported() && <MenuItem onClick={() => { setMenu(false); void st.openFile(); }}>Open &amp; link existing .json file…</MenuItem>}
                 <MenuItem onClick={() => { setMenu(false); window.print(); }}>Print current tab</MenuItem>
                 <div className="my-1 border-t border-slate-100" />
+                <MenuItem onClick={() => { setMenu(false); if (window.confirm('Clear the workspace to a blank state? All FPDs, BOP rows, PFMEA entries, and layout data will be removed. (Undo will bring it back.)')) st.resetToBlank(); }}>Clear / Blank Workspace</MenuItem>
                 <MenuItem onClick={() => { setMenu(false); if (window.confirm('Replace the current workspace with the PMA / UMA baseline dataset? (Undo will bring it back.)')) st.resetToSeed(); }}>Restore PMA / UMA baseline dataset</MenuItem>
               </div>
             </>
@@ -315,7 +316,7 @@ function SpineFilterBar() {
               const on = scope.cellIds.includes(c.id);
               return (
                 <button key={c.id} onClick={() => toggleCell(c.id)} aria-pressed={on} title={c.name} className={`rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${on ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-300 bg-white text-slate-600 hover:border-slate-500'}`}>
-                  Cell {c.number}
+                  {c.name ? `${c.number} · ${c.name}` : `Cell ${c.number}`}
                 </button>
               );
             })}
@@ -337,7 +338,7 @@ function SpineFilterBar() {
               ariaLabel="Zone refinement"
               value={scope.zoneId}
               onChange={(zoneId) => setScope({ ...scope, zoneId })}
-              options={[{ value: '', label: 'All zones' }, ...ws.zones.map((z) => ({ value: z.id, label: z.name, group: `Cell ${ws.cells.find((c) => c.id === z.cellId)?.number ?? '?'}` }))]}
+              options={[{ value: '', label: 'All zones' }, ...ws.zones.map((z) => { const c = ws.cells.find((x) => x.id === z.cellId); return { value: z.id, label: z.code ? `Zone ${z.code} · ${z.name}` : z.name, group: c ? (c.name ? `${c.number} · ${c.name}` : `Cell ${c.number}`) : '?' }; })]}
               className="!py-[3px] !text-[12px]"
             />
           </div>

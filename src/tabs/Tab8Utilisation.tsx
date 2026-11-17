@@ -6,6 +6,60 @@ import { useStore } from '../store';
 import { RESOURCE_KINDS, type ResourceKind } from '../types';
 import { ComplexityPill } from './Tab3Equipment';
 
+const UNDER_PCT = 15; // flag resources below this duty threshold
+
+function UnderUtilisationPanel() {
+  const { ws, model: m } = useStore();
+  const spd = ws.settings.calendar.hoursPerShift || 1;
+  const windowShifts = m.resources[0] ? (m.resources[0].programmeShifts / Math.max(1, m.resources[0].resource.qty)) : 0;
+  const idleWindowH = windowShifts * spd;
+
+  const under = m.resources.filter((r) => r.opCount > 0 && r.dutyPct < UNDER_PCT && r.dutyPct >= 0)
+    .sort((a, b) => a.dutyPct - b.dutyPct);
+
+  if (!under.length) return null;
+
+  return (
+    <Card className="mt-4" title={<>Under-Utilisation Waste Assessment <span className="ml-1 text-[12px] font-normal text-amber-700">· {under.length} asset{under.length > 1 ? 's' : ''} below {UNDER_PCT}% duty</span></>} pad={false}>
+      <div className="scroll-thin overflow-auto" style={{ maxHeight: 400 }}>
+        <table className="w-full min-w-max border-separate border-spacing-0">
+          <thead className="sticky top-0 z-10">
+            <tr>
+              <Th>Asset</Th><Th>Kind</Th><Th right>Duty Cycle %</Th><Th right>Idle Window h</Th><Th right>Under-Utilisation %</Th><Th>Recommendation</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {under.map((r) => {
+              const idleH = idleWindowH * (1 - r.dutyPct / 100);
+              const underPct = 100 - r.dutyPct;
+              const rec = r.dutyPct < 5
+                ? 'Consider removing or sharing — asset is effectively idle for this programme.'
+                : r.dutyPct < 10
+                  ? 'Review whether asset is required or can serve another cell / FPD.'
+                  : 'Assess shared-use opportunity or reduced-quantity procurement.';
+              return (
+                <tr key={r.resource.id} className="hover:bg-slate-50">
+                  <td className="td-ro font-medium text-slate-900">{r.resource.name}</td>
+                  <td className="td-ro text-slate-600">{RESOURCE_KINDS.find((k) => k.kind === r.resource.kind)?.label ?? r.resource.kind}</td>
+                  <td className="td-ro text-right tabular-nums">
+                    <span className="font-semibold text-amber-700">{r.dutyPct.toFixed(1)}%</span>
+                  </td>
+                  <td className="td-ro text-right tabular-nums text-slate-700">{idleH.toFixed(0)} h</td>
+                  <td className="td-ro text-right tabular-nums text-slate-700">{underPct.toFixed(1)}%</td>
+                  <td className="td-ro text-[12px] text-slate-700" style={{ minWidth: 300 }}>{rec}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-slate-200 bg-amber-50 px-3 py-1.5 text-[11.5px] text-amber-800">
+        Assets below {UNDER_PCT}% duty cycle are flagged as potential waste sources. Idle Window Hours = Programme Window × (1 − Duty %). Review shared-use or procurement scope before the design freeze gate.
+      </div>
+    </Card>
+  );
+}
+
 export default function Tab8Utilisation() {
   const { ws, mutate, model: m, setTab } = useStore();
   const [kind, setKind] = useState<'' | ResourceKind>('');
@@ -89,6 +143,8 @@ export default function Tab8Utilisation() {
           Ticks mark the Amber ({t.dutyAmberPct}%) and Serious ({t.dutySeriousPct}%) limits. One shift = {fmt(ws.settings.calendar.hoursPerShift, 1)} h. Complexity and dwell mode are set in <button className="underline hover:text-slate-800" onClick={() => setTab(3)}>Tab 3</button>.
         </div>
       </Card>
+
+      <UnderUtilisationPanel />
 
       <Card className="mt-4" title="Concurrency Conflicts — Resource Double-Booking" guide="spatialConflict" pad={false}>
         {m.conflicts.length === 0 ? <div className="p-4"><Empty>No two operations need the same resource at the same time beyond its quantity.</Empty></div> : (

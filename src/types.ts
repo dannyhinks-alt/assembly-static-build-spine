@@ -29,6 +29,8 @@ export interface Cell {
 export interface Zone {
   id: Id;
   cellId: Id;
+  /** Short letter/code (e.g. "A", "B"). Optional; legacy zones without it fall back to parsing the name. */
+  code?: string;
   name: string;
   /** Station point on the floor plan (m). Falls back to the cell shape centroid. */
   pos: Pt | null;
@@ -37,6 +39,10 @@ export interface Zone {
   /** Maximum crew that can work safely on one stand floor level of this zone at once. */
   maxCrewPerLevel: number | null;
 }
+
+/** Returns the display label for a zone: "Zone A · Name" or just the name if no code. */
+export const zoneLabel = (z: Pick<Zone, 'code' | 'name'>): string =>
+  z.code ? `Zone ${z.code} · ${z.name}` : z.name;
 
 export interface Component {
   id: Id;
@@ -52,7 +58,7 @@ export interface Component {
 
 export type ResourceKind = 'rig' | 'crane' | 'rigging' | 'vehicle' | 'stand';
 export const RESOURCE_KINDS: { kind: ResourceKind; label: string; plural: string; field: ResourceField }[] = [
-  { kind: 'rig', label: 'Process Rig / Tooling', plural: 'Process Rigs & Tooling', field: 'rigIds' },
+  { kind: 'rig', label: 'Tooling & Equipment', plural: 'Tooling & Equipment', field: 'rigIds' },
   { kind: 'crane', label: 'Crane', plural: 'Cranes', field: 'craneIds' },
   { kind: 'rigging', label: 'Rigging & Lifting Gear', plural: 'Rigging & Lifting Gear (L2/L3)', field: 'riggingIds' },
   { kind: 'vehicle', label: 'Transport Vehicle', plural: 'Transport Vehicles', field: 'vehicleIds' },
@@ -133,6 +139,8 @@ export interface BopRow {
   fpdId: Id;
   /** Route code / Op # — globally unique, used by predecessor links. */
   opId: string;
+  /** Agreed Baseline Hours for this row / work block. Used to calculate Variance vs Modelled. */
+  baselineHrs?: number;
   description: string;
   taskType: TaskType;
   predecessors: string[];
@@ -199,7 +207,10 @@ export interface Assumption {
   text: string;
   owner: string;
   confirmed: boolean;
+  /** Cell ID this assumption applies to, or '' / undefined for factory-wide. */
+  cellId?: Id | '';
 }
+
 
 export interface GateSignoff {
   by: string;

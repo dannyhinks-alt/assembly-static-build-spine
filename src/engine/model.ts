@@ -360,7 +360,8 @@ export function liftRecord(lc: LeafCalc, ws: Workspace): LiftRecord | null {
   const tierH = stands.find((x) => x.tierHeightM != null)?.tierHeightM ?? s.crane.defaultTierHeightM;
   const elevationM = l.floorLevel * tierH;
   const compH = Math.max(0, ...comps.map((c) => c!.heightM ?? 0));
-  const headroom = rigging.length ? Math.max(...rigging.map((r) => r.headroomM ?? s.crane.defaultRiggingHeadroomM)) : s.crane.defaultRiggingHeadroomM;
+  // Additive rigging stack-up: sum all tagged items' headroom values rather than taking max.
+  const headroom = rigging.length ? rigging.reduce((a, r) => a + (r.headroomM ?? s.crane.defaultRiggingHeadroomM), 0) : s.crane.defaultRiggingHeadroomM;
   const requiredHookM = elevationM + compH + headroom + s.crane.clearanceMarginM;
   const availableHookM = cranes.length ? Math.min(...cranes.map((c) => c.hookHeightM ?? s.crane.hookHeightM)) : s.crane.hookHeightM;
   const hookMarginM = availableHookM - requiredHookM;

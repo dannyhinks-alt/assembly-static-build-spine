@@ -232,7 +232,9 @@ export default function Tab2Bop() {
                   <Th guide="opportunity" right>Opp. h</Th>
                   <Th guide="classification">Classification</Th>
                   <Th guide="actionType">Action Type</Th>
-                  <Th guide="tagRigs">Process Rigs &amp; Tooling</Th>
+                  <Th guide="tagRigs">Tooling &amp; Equipment</Th>
+                  <Th right>Baseline h</Th>
+                  <Th right>Variance h</Th>
                   <Th guide="tagCranes">Cranes</Th>
                   <Th guide="tagRigging">Rigging &amp; Lifting Gear</Th>
                   <Th guide="tagVehicles">Transport Vehicles</Th>
@@ -257,7 +259,7 @@ export default function Tab2Bop() {
                             <b className="text-slate-900">{f.fpdCode}</b><span className="truncate text-slate-700">{f.title}</span><span className="text-[11px] text-slate-500">Rev {f.revision}</span>
                           </span>
                         </td>
-                        <td colSpan={28} className="border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5 text-[11.5px] tabular-nums text-slate-600">
+                        <td colSpan={30} className="border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5 text-[11.5px] tabular-nums text-slate-600">
                           <span className="flex items-center gap-3">
                             <span>{cell ? `Cell ${cell.number} · ${cell.name}` : 'No cell'}</span><span>{f.subAssemblyBomRef}</span>
                             <span>{fmtInt(rows.length)} Baseline work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
@@ -404,6 +406,10 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className="td w-[54px]">{ro ? num(r.liftCount, 0) : <NumInput cell value={r.liftCount} min={0} ariaLabel="Lift count" onChange={(v) => onEdit((d) => { d.liftCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
       <td className="td w-[54px]">{ro ? num(r.moveCount, 0) : <NumInput cell value={r.moveCount} min={0} ariaLabel="Move count" onChange={(v) => onEdit((d) => { d.moveCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
       <td className="td"><ExpandableTextCell value={r.notes} onChange={(v) => onEdit((d) => { d.notes = v; })} label="Engineering Notes" context={`${r.opId} · ${r.description}`} minWidth={200} /></td>
+      <td className="td w-[74px]">{ro ? num(r.baselineHrs ?? 0) : <NumInput cell value={r.baselineHrs ?? null} nullable min={0} ariaLabel="Baseline hours" onChange={(v) => onEdit((d) => { d.baselineHrs = v ?? undefined; })} />}</td>
+      <td className="td-ro w-[74px] text-right tabular-nums" title="Baseline h minus Modelled (Manning) h">
+        {r.baselineHrs != null ? (() => { const v = r.baselineHrs - r.manningHrs; return <span className={v < -0.05 ? 'text-red-700 font-semibold' : v > 0.05 ? 'text-amber-700' : 'text-green-700'}>{v >= 0 ? '+' : ''}{fmt(v, 1)}</span>; })() : <span className="text-slate-400">—</span>}
+      </td>
       <td className="td">
         {actions && (
           <span className="flex items-center whitespace-nowrap pt-0.5">

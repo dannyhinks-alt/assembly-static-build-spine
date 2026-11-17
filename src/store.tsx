@@ -1,7 +1,7 @@
 // Workspace store: immutable state with undo/redo, derived engine model, scope filter and persistence.
 import { produce, type Draft } from 'immer';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { seedWorkspace } from './data/seed';
+import { blankWorkspace, seedWorkspace } from './data/seed';
 import { runIntegrity, type IntegrityReport } from './engine/integrity';
 import { buildModel, type Model } from './engine/model';
 import {
@@ -40,6 +40,7 @@ interface Store {
   exportJson: () => void;
   importJsonText: (text: string, name: string) => void;
   resetToSeed: () => void;
+  resetToBlank: () => void;
   toasts: Toast[];
   toast: (kind: Toast['kind'], text: string) => void;
 }
@@ -62,7 +63,7 @@ const readJson = <T,>(key: string, fallback: T): T => {
 const HISTORY = 60;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [hist, setHist] = useState<{ past: Workspace[]; ws: Workspace; future: Workspace[] }>(() => ({ past: [], ws: loadLocal() ?? seedWorkspace(), future: [] }));
+  const [hist, setHist] = useState<{ past: Workspace[]; ws: Workspace; future: Workspace[] }>(() => ({ past: [], ws: loadLocal() ?? blankWorkspace(), future: [] }));
   const [scope, setScopeState] = useState<Scope>(() => ({ ...FACTORY_SCOPE, ...readJson<Partial<Scope>>(LS_SCOPE, {}) }));
   const [tab, setTabState] = useState<number>(() => Math.min(9, Math.max(1, readJson<number>(LS_TAB, 1))));
   const [dirty, setDirty] = useState(false);
@@ -236,9 +237,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toast('ok', 'PMA / UMA baseline dataset restored. Undo brings your previous workspace back.');
   }, [replace, setScope, toast]);
 
+  const resetToBlank = useCallback(() => {
+    replace(blankWorkspace());
+    setScope(FACTORY_SCOPE);
+    toast('ok', 'Workspace cleared. Undo brings your previous workspace back.');
+  }, [replace, setScope, toast]);
+
   const value: Store = {
     ws, mutate, replace, undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, scope, setScope, tab, setTab, model, integrity,
-    dirty, fileName: handle?.name ?? null, saveState, lastSaved, storageWarning, linkFile, openFile, unlinkFile, exportJson, importJsonText, resetToSeed, toasts, toast,
+    dirty, fileName: handle?.name ?? null, saveState, lastSaved, storageWarning, linkFile, openFile, unlinkFile, exportJson, importJsonText, resetToSeed, resetToBlank, toasts, toast,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

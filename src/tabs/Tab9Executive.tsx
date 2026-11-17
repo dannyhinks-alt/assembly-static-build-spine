@@ -118,6 +118,18 @@ export default function Tab9Executive() {
               ))}
             </ol>
           )}
+          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 text-[12px] text-slate-700">
+            <p className="font-semibold text-slate-900 mb-1">RDC Transfer &amp; Engineering Governance Note</p>
+            <p>Prior to transferring this workspace to the RDC (Release &amp; Deployment Centre) or progressing beyond the current gate, the following engineering governance checkpoints must be satisfied:</p>
+            <ul className="mt-1.5 list-disc pl-5 space-y-0.5">
+              <li>All Red and Serious PFMEA items must carry a documented mitigation or accepted concession before RDC submission.</li>
+              <li>Assumptions marked <em>Unconfirmed</em> in the Assumptions Register (Tab 1) must be formally closed or escalated to the Programme Lead.</li>
+              <li>HIGH RISK resources (Tab 8) must each carry a Bottleneck Mitigation Strategy before the design freeze gate.</li>
+              <li>Hook-height breaches and Ar-Red labour-locked activities (Tab 2) must be dispositioned before the first physical build commences.</li>
+              <li>The exported <code>summary@V2</code> JSON must be attached to the Engineering Change Note lodged in the Master Control Hub before sign-off is recorded here.</li>
+            </ul>
+            <p className="mt-1.5 text-slate-500 text-[11.5px]">This note is for guidance only. Formal sign-off authority rests with the responsible Engineering Manager per the programme governance framework.</p>
+          </div>
         </Card>
       </div>
 
