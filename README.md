@@ -1,3 +1,21 @@
+## 1. Quick Start for Engineers (Offline Usage)
+
+1. **Download the Latest Offline App (1-Click Direct Link):**
+   - Open: `https://github.com`
+   - *(If transferring via corporate email, rename `index.html` to `index.txt`, send it, then rename back to `index.html`.)*
+2. **Open in Microsoft Edge or Chrome:**
+   - Double-click `index.html` locally—runs 100% offline with zero internet or CDN calls.
+
+## 2. Standard Solo Workflow & Automated Rules for `claude.ai/code`
+
+- **Single-Branch Policy (`main`):** Always commit and push directly to `main` (`git checkout -B main && git push -f origin main`) and delete any stale `claude/*` feature branches (`git push origin --delete <branch> || true`) so `main` stays our single clean branch with no open PRs.
+- **Offline Single-File Build:** Every code change MUST rebuild and force-commit `dist-offline/index.html` (`npm run build:offline && git add -f dist-offline/index.html`). Zero external runtime CDNs are permitted.
+- **Domain & Language Standards:**
+  - Use **British English** throughout (`utilisation`, `despatch`, `analyse`, `programme`, `£`, `m²`).
+  - Never use retail terminology; use **Product Family / FPD / Variant**.
+
+---
+
 # Assembly & Static Build Central Spine v1.0
 
 Offline-first single-page application (React 18 · TypeScript · Vite · Tailwind CSS, `en-GB`) that replaces
