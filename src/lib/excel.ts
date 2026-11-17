@@ -30,10 +30,22 @@ export interface ParsedWorkbook { fileName: string; sheets: Record<string, Row[]
 const SHEET_KINDS: [RegExp, string][] = [
   [/pfmea|fmea|risk/i, 'pfmea'],
   [/fpd|document|registry/i, 'fpds'],
+  [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],  // combined Master BOP & PFMEA sheet
   [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],  // 'ktp' kept for legacy sheet names
   [/component|bom|part/i, 'components'],
   [/resource|equipment|crane|tool/i, 'resources'],
 ];
+
+/** Scan the first 15 rows of a sheet to find the actual header row. */
+function scanHeaderRow(aoa: unknown[][]): number {
+  const SIGNALS = ['route code', 'phase #', 'operation phase title', 'op #', 'fpd code', 'failure mode', 'bom ref', 'name', 'kind', 'resource'];
+  for (let i = 0; i < Math.min(15, aoa.length); i++) {
+    const row = aoa[i] as unknown[];
+    const rowStr = row.map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#]+/g, ' ').trim()).join(' | ');
+    if (SIGNALS.some((s) => rowStr.includes(s))) return i;
+  }
+  return 0;
+}
 
 export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
   const XLSX = await import('xlsx');
@@ -51,7 +63,23 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
       }
     }
     const kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
-    if (kind && !sheets[kind]) sheets[kind] = XLSX.utils.sheet_to_json<Row>(sh, { defval: '' });
+    if (kind && !sheets[kind]) {
+      // Dynamic header detection: scan first 15 rows for the real header row.
+      const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
+      const hIdx = scanHeaderRow(aoa);
+      if (hIdx === 0) {
+        sheets[kind] = XLSX.utils.sheet_to_json<Row>(sh, { defval: '' });
+      } else {
+        const headers = (aoa[hIdx] as unknown[]).map((v) => String(v ?? ''));
+        sheets[kind] = (aoa.slice(hIdx + 1) as unknown[][])
+          .filter((row) => row.some((v) => v !== '' && v != null))
+          .map((row) => {
+            const obj: Row = {};
+            headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+            return obj;
+          });
+      }
+    }
   }
   return { fileName: file.name, sheets, errorCells };
 }
@@ -204,9 +232,11 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
     const tags = (kind: ResourceKind, v: unknown) => list(v).map((n) => ensureRes(kind, n, true).id);
     const flat = new Map<string, BopRow>();
     for (const r of ws.rows) for (const l of leavesOf(r)) flat.set(l.opId.trim().toLowerCase(), l);
+    // Track last destination zone per FPD for origin zone auto-link (Master BOP & PFMEA Combined import).
+    const lastDestZone = new Map<string, string>();
     for (const r of S.bop) {
       const op = str(col(r, 'Op #', 'Op', 'Route Code', 'Route Code / Op #', 'Op ID', 'Operation'));
-      const code = str(col(r, 'FPD Code', 'FPD', 'FPD Ref'));
+      const code = str(col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase'));
       if (!op || !code) { if (op || code) warnings.push(`BOP row skipped — needs both FPD Code and Op # (got "${code}" / "${op}").`); continue; }
       const fpd = ensureFpd(code);
       let row = flat.get(op.toLowerCase());
@@ -217,13 +247,16 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
         c.added++;
       } else c.updated++;
       row.fpdId = fpd.fpdId;
-      row.description = str(col(r, 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Work Block / Activity Description', 'Activity')) || row.description;
+      row.description = str(col(r, 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Work Block / Activity Description', 'Activity', 'Operation Phase Title')) || row.description;
       row.taskType = /par/i.test(str(col(r, 'Task Type', 'Type'))) ? 'Parallel' : 'Sequential';
-      row.predecessors = list(col(r, 'Predecessors', 'Predecessor #', 'Predecessor', 'Pred'));
-      row.destZoneId = zoneOf(col(r, 'Destination Zone', 'Destination', 'Dest Zone', 'Destination Cell / Zone'), op) || row.destZoneId;
-      row.originZoneId = zoneOf(col(r, 'Origin Zone', 'Origin', 'Origin Cell / Zone'), op) || row.originZoneId || row.destZoneId;
+      row.predecessors = list(col(r, 'Predecessors', 'Predecessor #', 'Predecessor', 'Pred', 'Predecessor Phase #'));
+      row.destZoneId = zoneOf(col(r, 'Destination Zone', 'Destination', 'Dest Zone', 'Destination Cell / Zone', 'Zone'), op) || row.destZoneId;
+      // Origin zone: explicit column, or auto-link from previous row's destination zone in same FPD.
+      const explicitOrigin = zoneOf(col(r, 'Origin Zone', 'Origin', 'Origin Cell / Zone'), op);
+      row.originZoneId = explicitOrigin || lastDestZone.get(fpd.fpdId) || row.destZoneId;
+      if (row.destZoneId) lastDestZone.set(fpd.fpdId, row.destZoneId);
       row.floorLevel = levelOf(col(r, 'Floor Level', 'Stand Floor Level', 'Level'));
-      row.componentIds = list(col(r, 'Components', 'Component', 'Component Name / Description', 'BOM Refs')).map((ref) => {
+      row.componentIds = list(col(r, 'Components', 'Component', 'Component Name / Description', 'Component Name/Description', 'BOM Refs')).map((ref) => {
         let m = findCmp(ref);
         if (!m) {
           m = { id: uid('cmp'), bomRef: ref, name: ref, weightKg: null, lengthM: null, widthM: null, heightM: null, qtyPerBuild: 1, notes: '' };
@@ -233,22 +266,30 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
         }
         return m.id;
       });
-      row.crewSize = Math.max(1, Math.round(num(col(r, 'Crew Size', 'Crew'), 1)));
+      row.crewSize = Math.max(1, Math.round(num(col(r, 'Crew Size', 'Crew', 'Crew Density'), 1)));
       row.runHrs = Math.max(0, num(col(r, 'Run Time (hrs)', 'Run Time', 'Equipment / Bay Run Time (hrs)', 'Run')));
-      row.manningHrs = Math.max(0, num(col(r, 'Manning Time (hrs)', 'Manning Time', 'Operator Manning Time (hrs)', 'Manning'), row.runHrs));
+      row.manningHrs = Math.max(0, num(col(r, 'Manning Time (hrs)', 'Manning Time', 'Operator Manning Time (hrs)', 'Manning', 'Labour Content (Hours)', 'Labour Content'), row.runHrs));
       row.touchHrs = Math.max(0, num(col(r, 'Touch Time (hrs)', 'Touch Time', 'Operator Touch Time (hrs)', 'Touch'), row.manningHrs));
       if (row.touchHrs > row.manningHrs) { warnings.push(`${op}: Touch Time ${row.touchHrs} h exceeded Manning Time ${row.manningHrs} h — capped.`); row.touchHrs = row.manningHrs; }
-      row.classification = classOf(col(r, 'Classification', 'Action Classification', 'VA'));
+      row.classification = classOf(col(r, 'Classification', 'Action Classification', 'VA', 'Operation Action Category'));
       row.actionType = actionOf(col(r, 'Action Type', 'Specific Action Type', 'Action'));
-      row.rigIds = tags('rig', col(r, 'Process Rigs', 'Process Rigs & Tooling', 'Rigs', 'Tooling'));
+      row.rigIds = tags('rig', col(r, 'Process Rigs', 'Process Rigs & Tooling', 'Rigs', 'Tooling', 'L1 Parent Tool'));
       row.craneIds = tags('crane', col(r, 'Cranes', 'Crane'));
       row.riggingIds = tags('rigging', col(r, 'Rigging', 'Rigging & Lifting Gear', 'Lifting Gear'));
       row.vehicleIds = tags('vehicle', col(r, 'Vehicles', 'Transport Vehicles', 'Transport'));
-      row.standIds = tags('stand', col(r, 'Stands', 'Build & Storage Stands', 'Stand'));
+      row.standIds = tags('stand', col(r, 'Stands', 'Build & Storage Stands', 'Stand', 'L3 Sub-Tool'));
       row.liftCount = Math.max(0, Math.round(num(col(r, 'Lifts', 'Lift Count'))));
       if (row.actionType === 'Lifting' && row.liftCount === 0) row.liftCount = 1;
       row.moveCount = Math.max(0, Math.round(num(col(r, 'Moves', 'Move Count'))));
-      row.notes = str(col(r, 'Notes', 'Engineering Notes')) || row.notes;
+      row.notes = str(col(r, 'Notes', 'Engineering Notes', 'Rationale', 'Comments')) || row.notes;
+      // Quality Gate Sign-off → create a Hold Point if non-empty.
+      const gateTitle = str(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
+      if (gateTitle) {
+        const existing = ws.holdPoints.find((h) => h.opId === op && h.title.toLowerCase() === gateTitle.toLowerCase());
+        if (!existing) {
+          ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' });
+        }
+      }
     }
   }
 
@@ -336,6 +377,91 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
     sh['!cols'] = [{ wch: 40 }, { wch: 44 }];
     XLSX.utils.book_append_sheet(wb, sh, 'Summary');
   }
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+  return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+/** Dedicated BOP export: 'Bill of Process' sheet (with schedule / CPM / lift data) + 'Master BOP & PFMEA Combined' sheet. */
+export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  const cellName = (id: string) => { const c = ws.cells.find((x) => x.id === id); return c ? `Cell ${c.number} · ${c.name}` : ''; };
+  const zone = (id: string) => ws.zones.find((z) => z.id === id)?.name ?? '';
+  const fpd = (id: string) => ws.fpds.find((f) => f.fpdId === id);
+  const names = (ids: string[]) => ids.map((i) => ws.resources.find((r) => r.id === i)?.name ?? '').filter(Boolean).join('; ');
+  const hpFor = (opId: string) => ws.holdPoints.filter((h) => h.opId === opId).map((h) => h.title).join('; ');
+  const sheet = (name: string, rows: Row[], widths: number[]) => {
+    const sh = XLSX.utils.json_to_sheet(rows);
+    sh['!cols'] = widths.map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, sh, name);
+  };
+
+  // ---- Bill of Process sheet ----
+  const bopRows: Row[] = [];
+  for (const r of ws.rows) {
+    for (const l of leavesOf(r)) {
+      const node = m.cpm.nodes.get(r.id);
+      const f = fpd(l.fpdId);
+      bopRows.push({
+        'FPD Code': f?.fpdCode ?? '', 'FPD Title': f?.title ?? '', 'Cell Name': cellName(f?.assignedCellId ?? ''),
+        'Op #': l.opId, 'Baseline Work Block': r.children?.length ? r.opId : '',
+        Description: l.description, 'Task Type': l.taskType,
+        Predecessors: l.predecessors.join(', '),
+        'Origin Zone': zone(l.originZoneId), 'Destination Zone': zone(l.destZoneId),
+        'Floor Level': FLOOR_LEVELS[l.floorLevel] ?? 'Ground',
+        'Component Name / Description': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join('; '),
+        'Crew Density': l.crewSize,
+        'Equipment / Bay Run Time (hrs)': l.runHrs,
+        'Operator Touch Time (hrs)': l.touchHrs,
+        'Labour Content (Hours)': l.manningHrs,
+        'Baseline Hours': l.baselineHrs ?? '',
+        'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '',
+        'Operation Action Category': l.classification,
+        'Specific Action Type': l.actionType,
+        'L1 Parent Tool': names(l.rigIds),
+        Crane: names(l.craneIds),
+        Rigging: names(l.riggingIds),
+        Vehicles: names(l.vehicleIds),
+        'L3 Sub-Tool': names(l.standIds),
+        'Lift Count': l.liftCount, 'Move Count': l.moveCount,
+        'Schedule Start (h)': node ? +node.es.toFixed(1) : '',
+        'Schedule Finish (h)': node ? +node.ef.toFixed(1) : '',
+        'Float (h)': node ? +node.float.toFixed(1) : '',
+        Critical: node?.critical ? 'Y' : 'N',
+        'Quality Gate Sign-off': hpFor(l.opId),
+        Notes: l.notes,
+      });
+    }
+  }
+  sheet('Bill of Process', bopRows, [10, 32, 24, 10, 11, 48, 10, 16, 24, 24, 10, 36, 7, 12, 13, 15, 12, 11, 12, 20, 24, 20, 20, 16, 7, 7, 14, 14, 10, 8, 24, 36]);
+
+  // ---- Master BOP & PFMEA Combined sheet ----
+  const combined: Row[] = [];
+  for (const r of ws.rows) {
+    for (const l of leavesOf(r)) {
+      const f = fpd(l.fpdId);
+      combined.push({
+        'Phase #': f?.fpdCode ?? '', 'Route Code': l.opId,
+        'Operation Phase Title': l.description,
+        'Task Type': l.taskType, 'Predecessor Phase #': l.predecessors.join(', '),
+        Zone: zone(l.destZoneId),
+        'Component Name/Description': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join('; '),
+        'Crew Density': l.crewSize,
+        'Equipment / Bay Run Time (hrs)': l.runHrs,
+        'Labour Content (Hours)': l.manningHrs,
+        'Operation Action Category': l.classification,
+        'Specific Action Type': l.actionType,
+        'L1 Parent Tool': names(l.rigIds),
+        Crane: names(l.craneIds),
+        Rigging: names(l.riggingIds),
+        'L3 Sub-Tool': names(l.standIds),
+        'Quality Gate Sign-off': hpFor(l.opId),
+        Rationale: l.notes,
+      });
+    }
+  }
+  sheet('Master BOP & PFMEA Combined', combined, [10, 10, 48, 10, 16, 24, 36, 7, 12, 15, 20, 24, 24, 20, 20, 16, 24, 36]);
+
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
   return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

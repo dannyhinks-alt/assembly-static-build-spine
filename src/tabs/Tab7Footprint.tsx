@@ -58,10 +58,15 @@ export default function Tab7Footprint() {
   // ---- plan viewport ----
   const shape = cellShape(cellId);
   let vb = { x: -3, y: -3, w: L + 6, h: W + 6 };
-  if (view === 'cell' && shape) {
-    const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
-    const pad = Math.max(2, 0.12 * Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
-    vb = { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, w: Math.max(...xs) - Math.min(...xs) + 2 * pad, h: Math.max(...ys) - Math.min(...ys) + 2 * pad };
+  if (view === 'cell') {
+    const cellShapes = ws.layout.shapes.filter((s) => s.target === `cell:${cellId}`);
+    const zonePositions = ws.zones.filter((z) => z.cellId === cellId).map((z) => pt(z.id, false)).filter((p): p is [number, number] => p !== null);
+    const allPts: [number, number][] = [...cellShapes.flatMap((s) => s.points as [number, number][]), ...zonePositions];
+    if (allPts.length) {
+      const xs = allPts.map((p) => p[0]), ys = allPts.map((p) => p[1]);
+      const pad = Math.max(2, 0.12 * Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
+      vb = { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, w: Math.max(...xs) - Math.min(...xs) + 2 * pad, h: Math.max(...ys) - Math.min(...ys) + 2 * pad };
+    }
   }
   const u = vb.w / 900; // one screen unit in metres
   const pt = (zoneId: string, future: boolean): Pt | null => zonePoint(ws, zoneId, future);
@@ -103,7 +108,7 @@ export default function Tab7Footprint() {
   });
 
   // ---- footprint ----
-  const total = L * W;
+  const total = ws.layout.floorAreaOverrideM2 ?? (L * W);
   const allocated = cells.reduce((a, c) => a + cellArea(c.id), 0) + ws.layout.shapes.filter((s) => s.target === 'stores' || s.target === 'dispatch').reduce((a, s) => a + polygonArea(s.points), 0);
 
   // ---- side elevation ----
@@ -113,7 +118,11 @@ export default function Tab7Footprint() {
   const sLifts = stand ? m.lifts.filter((l) => l.standIds.includes(stand.id)).sort((a, b) => a.startHrs - b.startHrs) : [];
   const tierH = stand?.tierHeightM ?? ws.settings.crane.defaultTierHeightM;
   const tiers = Math.max(stand?.tiers ?? 1, ...sLifts.map((l) => l.floorLevel));
-  const hooks = [...new Map(sLifts.map((l) => [l.availableHookM, l.craneIds.map((id) => ws.resources.find((r) => r.id === id)?.name ?? '').filter(Boolean).join(' + ') || 'Primary crane (Tab 1)'])).entries()];
+  const hooksRaw = sLifts.map((l) => {
+    const craneNames = l.craneIds.map((id) => ws.resources.find((r) => r.id === id)?.name ?? '').filter(Boolean).join(' + ') || 'Primary crane (Tab 1)';
+    return [l.availableHookM, craneNames] as [number, string];
+  });
+  const hooks = [...new Map(hooksRaw).entries()];
   const zMax = Math.max(...sLifts.map((l) => Math.max(l.requiredHookM, l.availableHookM)), tiers * tierH + 1, 1) + 0.45;
   const EW = 1000, EH = 340, EL = 92, EB = 46, ET = 14;
   const ez = (z: number) => ET + (1 - z / zMax) * (EH - ET - EB);
@@ -169,7 +178,7 @@ export default function Tab7Footprint() {
       >
         <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_450px]">
           <div className="border-b border-slate-200 xl:border-b-0 xl:border-r">
-            {view === 'cell' && !shape ? <div className="p-4"><Empty>This cell has no shape on the floor plan yet. Draw or import it in Tab 1.</Empty></div> : (
+            {view === 'cell' && !shape && ws.zones.filter((z) => z.cellId === cellId).every((z) => !pt(z.id, false)) ? <div className="p-4"><Empty>This cell has no shape or zone positions on the floor plan yet. Draw shapes or set zone co-ordinates in Tab 1.</Empty></div> : (
               <svg viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} className="block w-full" style={{ maxHeight: 560, aspectRatio: `${vb.w} / ${vb.h}` }} role="img" aria-label="Floor plan with movement flows">
                 <defs>
                   <marker id="arr-c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 Z" fill={CUR} /></marker>
@@ -321,7 +330,7 @@ export default function Tab7Footprint() {
       <Card className="mt-4" title="Footprint & Space by Cell" guide="floorClaim" pad={false}>
         <div className="scroll-thin overflow-auto">
           <table className="w-full min-w-max">
-            <thead><tr><Th>Cell</Th><Th right guide="shapeArea">Area m²</Th><Th right>Share of factory</Th><Th right guide="floorClaim">Equipment claim m²</Th><Th guide="floorClaim">Claimed</Th><Th right>Free m²</Th><Th right guide="cellCrew">Crew / shift</Th><Th right>m² per operator</Th><Th right guide="pinchOverlay">Pinch points</Th><Th>Zones</Th></tr></thead>
+            <thead><tr><Th>Cell</Th><Th right guide="shapeArea">Area m²</Th><Th right>Share of factory</Th><Th right guide="floorClaim">Equipment claim m²</Th><Th guide="floorClaim">Claimed</Th><Th right>Free m²</Th><Th right guide="cellCrew">Crew / shift</Th><Th right>m² per operator</Th><Th>Space verdict</Th><Th right guide="pinchOverlay">Pinch points</Th><Th>Zones</Th></tr></thead>
             <tbody>
               {cells.map((c) => {
                 const area = cellArea(c.id);
@@ -338,6 +347,7 @@ export default function Tab7Footprint() {
                     <td className="td-ro text-right">{area ? fmtInt(area - claim) : '—'}</td>
                     <td className="td-ro text-right">{fmtInt(c.crewPerShift)}</td>
                     <td className="td-ro text-right">{area && c.crewPerShift ? fmtInt((area - claim) / c.crewPerShift) : '—'}</td>
+                    <td className="td-ro">{(() => { if (!area) return <span className="text-slate-400">no shape</span>; const pct2 = (claim / area) * 100; if (pct2 > 90) return <RagBadge rag="red" label="Over-committed" />; if (pct2 > 70) return <RagBadge rag="amber" label="Tight" />; if (pct2 > 20) return <RagBadge rag="green" label="Adequate" />; return <Pill tone="outline">Under-utilised</Pill>; })()}</td>
                     <td className="td-ro text-right">{pp ? <RagBadge rag={pinch.filter((p) => p.zone.cellId === c.id).reduce<Rag>((w, p) => (ragRank(p.rag) > ragRank(w) ? p.rag : w), 'green')} label={String(pp)} /> : <span className="text-slate-400">0</span>}</td>
                     <td className="td-ro text-[12px] text-slate-600">{ws.zones.filter((z) => z.cellId === c.id).map((z) => z.name.split('·')[0].trim()).join(', ') || '—'}</td>
                   </tr>
@@ -348,7 +358,14 @@ export default function Tab7Footprint() {
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[11.5px] text-slate-500">
           <span>Equipment claim = footprint × quantity of resources homed in the cell (Tab 3). Cell shapes are drawn or imported in Tab 1.</span>
-          <span className="ml-auto flex items-center gap-1.5"><Pill tone="outline">Boundary {fmt(L, 0)} × {fmt(W, 0)} m</Pill><Pill tone="outline">{fmtInt(total - allocated)} m² gangways &amp; unallocated</Pill></span>
+          <span className="ml-auto flex flex-wrap items-center gap-1.5">
+            <Pill tone="outline">Boundary {fmt(L, 0)} × {fmt(W, 0)} m</Pill>
+            <Pill tone="outline">{fmtInt(total - allocated)} m² gangways &amp; unallocated</Pill>
+            <span className="flex items-center gap-1">
+              <span className="text-slate-500">Floor area override m²</span>
+              <NumInput nullable value={ws.layout.floorAreaOverrideM2 ?? null} min={0} onChange={(v) => mutate((d) => { d.layout.floorAreaOverrideM2 = v; })} ariaLabel="Total factory floor area override m²" />
+            </span>
+          </span>
         </div>
       </Card>
     </div>

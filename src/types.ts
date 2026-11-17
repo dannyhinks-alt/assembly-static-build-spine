@@ -14,6 +14,10 @@ export interface Fpd {
   title: string;
   subAssemblyBomRef: string;
   assignedCellId: Id;
+  /** Additional cells this FPD spans — metadata only, not used for analysis filtering. */
+  assignedCellIds?: Id[];
+  /** How activities in this FPD are sequenced across the schedule. */
+  sequenceMode?: 'explicit' | 'chain';
   revision: string;
   active: boolean;
 }
@@ -103,6 +107,10 @@ export interface Resource {
   utilities: string[];
   dwellMode: DwellMode;
   notes: string;
+  /** Cranes: installed floor level index (0 = Ground). */
+  floorLevel?: number;
+  /** Cranes: hoist well / cross-floor crane spanning multiple levels. */
+  hoistWell?: boolean;
 }
 export const complexityScore = (r: Pick<Resource, 'complexity'>): number =>
   COMPLEXITY_CRITERIA.reduce((a, _c, i) => a + Math.min(3, Math.max(1, Math.round(r.complexity?.[i] ?? 1))), 0);
@@ -218,6 +226,26 @@ export interface GateSignoff {
   comment: string;
 }
 
+// ---------- Ancillaries ----------
+export type AncillaryKind = 'pc-station' | 'storage-cabinet' | 'kitting-bench' | 'other';
+export const ANCILLARY_KINDS: { value: AncillaryKind; label: string }[] = [
+  { value: 'pc-station', label: 'PC / Engineering Station' },
+  { value: 'storage-cabinet', label: 'Tooling Storage Cabinet' },
+  { value: 'kitting-bench', label: 'Kitting Bench' },
+  { value: 'other', label: 'Other Ancillary' },
+];
+export interface Ancillary {
+  id: Id;
+  name: string;
+  kind: AncillaryKind;
+  cellId: Id | '';
+  floorLevel: number;
+  lengthM: number | null;
+  widthM: number | null;
+  qty: number;
+  notes: string;
+}
+
 // ---------- Layout ----------
 export type Pt = [number, number];
 export interface LayoutShape {
@@ -236,10 +264,22 @@ export interface LayoutImage {
   mPerPx: number | null;
   calib: { a: Pt; b: Pt; distanceM: number } | null;
 }
+export interface FloorPlan {
+  id: Id;
+  name: string;
+  /** Floor elevation above ground datum (m). */
+  elevationM: number;
+  image: LayoutImage | null;
+  shapes: LayoutShape[];
+}
 export interface Layout {
   shapes: LayoutShape[];
   image: LayoutImage | null;
   snapM: number;
+  /** Additional floor levels above ground (each with their own image and polygons). */
+  floors?: FloorPlan[];
+  /** Manual override for total factory floor area (m²). Null = use envelope L × W. */
+  floorAreaOverrideM2?: number | null;
 }
 
 // ---------- Settings ----------
@@ -309,6 +349,7 @@ export interface Workspace {
   pfmea: PfmeaItem[];
   holdPoints: HoldPoint[];
   assumptions: Assumption[];
+  ancillaries: Ancillary[];
   gateSignoffs: Record<string, GateSignoff>;
   mitigations: Record<string, string>;
   layout: Layout;

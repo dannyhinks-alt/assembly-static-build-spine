@@ -1,13 +1,13 @@
 import type { Draft } from 'immer';
 import { DataTable, type Col } from '../components/DataTable';
 import { Card, ExpandableTextCell, Field, HowItWorks, Kpi, Meter, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip } from '../components/primitives';
-import { blankResource } from '../data/seed';
+import { blankAncillary, blankResource } from '../data/seed';
 import { dutyRag } from '../engine/model';
 import { polygonArea } from '../lib/geometry';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
 import { useStore } from '../store';
-import type { Complexity, Rag, Resource, ResourceKind, Settings } from '../types';
-import { COMPLEXITY_CRITERIA, RESOURCE_KINDS, UTILITY_SERVICES, complexityOf, complexityScore, floorClaimM2, uid } from '../types';
+import type { Ancillary, Complexity, Rag, Resource, ResourceKind, Settings } from '../types';
+import { ANCILLARY_KINDS, COMPLEXITY_CRITERIA, RESOURCE_KINDS, UTILITY_SERVICES, complexityOf, complexityScore, floorClaimM2, uid } from '../types';
 
 const CX_TONE: Record<Complexity, 'outline' | 'slate' | 'dark'> = { Simple: 'outline', Medium: 'slate', Complex: 'dark' };
 const SCORE_STYLE = ['', 'border-slate-200 bg-white text-slate-600', 'border-slate-300 bg-slate-200 text-slate-800', 'border-slate-800 bg-slate-800 text-white'];
@@ -62,7 +62,7 @@ export default function Tab3Equipment() {
   ];
   const colsFor: Record<ResourceKind, Col<Resource>[]> = {
     rig: [nameCol, qtyCol, cellCol, cxCol, ...fp, utilCol, dwellCol, ...usageCols],
-    crane: [nameCol, qtyCol, cellCol, swlCol('SWL kg'), numCol('hookHeightM', 'Hook height m', 'resHook', 104), cxCol, ...fp, utilCol, ...usageCols],
+    crane: [nameCol, qtyCol, cellCol, swlCol('SWL kg'), numCol('hookHeightM', 'Hook height m', 'resHook', 104), { key: 'fl', label: 'Floor Level', right: true, width: 80, render: (r) => <NumInput cell nullable value={r.floorLevel ?? null} min={0} max={3} onChange={(v) => upd(r.id, (x) => { x.floorLevel = v == null ? undefined : Math.min(3, Math.max(0, Math.round(v))); })} ariaLabel="Floor level" /> }, { key: 'hw', label: 'Hoist Well', width: 80, render: (r) => <span className="flex justify-center pt-1.5"><input type="checkbox" className="accent-slate-800" checked={!!r.hoistWell} onChange={(e) => upd(r.id, (x) => { x.hoistWell = e.target.checked; })} aria-label="Hoist well / cross-floor crane" /></span> }, cxCol, ...fp, utilCol, ...usageCols],
     rigging: [nameCol, qtyCol, swlCol('WLL kg'), numCol('headroomM', 'Headroom m', 'resHeadroom', 96), numCol('tareKg', 'Tare kg', 'resTare', 76), cxCol, utilCol, ...usageCols],
     vehicle: [nameCol, qtyCol, cellCol, swlCol('Payload kg'), cxCol, ...fp, utilCol, dwellCol, ...usageCols],
     stand: [nameCol, qtyCol, cellCol, swlCol('SWL kg'), numCol('tiers', 'Tiers', 'resTiers', 60), numCol('tierHeightM', 'Tier height m', 'resTiers', 104), cxCol, ...fp, utilCol, dwellCol, ...usageCols],
@@ -185,6 +185,34 @@ export default function Tab3Equipment() {
           );
         })}
       </div>
+
+      <AncillariesCard className="mt-4" />
     </div>
+  );
+}
+
+function AncillariesCard({ className = '' }: { className?: string }) {
+  const { ws, mutate } = useStore();
+  const cellOpts = [{ value: '', label: 'Shared / none' }, ...ws.cells.map((c) => ({ value: c.id, label: c.name ? `${c.number} · ${c.name}` : `Cell ${c.number}` }))];
+  const upd = (id: string, fn: (a: Ancillary) => void) => mutate((d) => { const a = d.ancillaries.find((x) => x.id === id); if (a) fn(a); });
+  const cols: Col<Ancillary>[] = [
+    { key: 'name', label: 'Name / Ref', minWidth: 200, render: (a) => <TextInput cell value={a.name} onChange={(v) => upd(a.id, (x) => { x.name = v; })} ariaLabel="Ancillary name" /> },
+    { key: 'kind', label: 'Type', minWidth: 200, render: (a) => <Select cell value={a.kind} options={ANCILLARY_KINDS} onChange={(v) => upd(a.id, (x) => { x.kind = v as Ancillary['kind']; })} ariaLabel="Ancillary type" /> },
+    { key: 'cell', label: 'Home Cell', minWidth: 160, render: (a) => <Select cell value={a.cellId} options={cellOpts} onChange={(v) => upd(a.id, (x) => { x.cellId = v; })} ariaLabel="Home cell" /> },
+    { key: 'fl', label: 'Floor Level', right: true, width: 80, render: (a) => <NumInput cell value={a.floorLevel} min={0} max={3} onChange={(v) => upd(a.id, (x) => { x.floorLevel = Math.round(v ?? 0); })} ariaLabel="Floor level" /> },
+    { key: 'l', label: 'L m', right: true, width: 68, render: (a) => <NumInput cell nullable value={a.lengthM} min={0} onChange={(v) => upd(a.id, (x) => { x.lengthM = v; })} ariaLabel="Length m" /> },
+    { key: 'w', label: 'W m', right: true, width: 68, render: (a) => <NumInput cell nullable value={a.widthM} min={0} onChange={(v) => upd(a.id, (x) => { x.widthM = v; })} ariaLabel="Width m" /> },
+    { key: 'qty', label: 'Qty', right: true, width: 56, render: (a) => <NumInput cell value={a.qty} min={1} onChange={(v) => upd(a.id, (x) => { x.qty = Math.max(1, Math.round(v ?? 1)); })} ariaLabel="Quantity" /> },
+    { key: 'claim', label: 'Claim m²', right: true, ro: true, render: (a) => a.lengthM && a.widthM ? <span className="tabular-nums">{fmt(a.lengthM * a.widthM * a.qty, 1)}</span> : <span className="text-slate-400">—</span> },
+    { key: 'notes', label: 'Notes', minWidth: 180, render: (a) => <ExpandableTextCell value={a.notes} onChange={(v) => upd(a.id, (x) => { x.notes = v; })} label="Ancillary notes" context={a.name} /> },
+  ];
+  return (
+    <Card className={className} collapseKey="ancillaries" defaultOpen={false} title={<>Ancillaries &amp; Storage <span className="font-normal tabular-nums text-slate-500">· {fmtInt(ws.ancillaries.length)}</span></>} pad={false}
+      right={<button className="btn-primary" onClick={() => mutate((d) => { d.ancillaries.push(blankAncillary()); })}>＋ Add ancillary</button>}>
+      <DataTable cols={cols} rows={ws.ancillaries} rowKey={(a) => a.id}
+        onDelete={(a) => mutate((d) => { d.ancillaries = d.ancillaries.filter((x) => x.id !== a.id); })}
+        onClone={(a) => mutate((d) => { d.ancillaries.push({ ...a, id: uid('anc'), name: `${a.name} (copy)` }); })}
+        empty="No ancillaries registered." />
+    </Card>
   );
 }

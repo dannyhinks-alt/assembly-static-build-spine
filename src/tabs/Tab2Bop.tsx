@@ -5,6 +5,8 @@ import { FpdRegistryCard } from '../components/FpdRegistry';
 import { blankRow } from '../data/seed';
 import { isBlock, leavesOf, opIndex, rollUpBlock, type CpmNode, type LeafCalc, type RowCalc } from '../engine/model';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
+import { exportBop } from '../lib/excel';
+import { download, fileSafe } from '../lib/persistence';
 import { useStore } from '../store';
 import type { BopRow, Classification, ResourceField, Workspace } from '../types';
 import { ACTION_TYPES, CLASSIFICATIONS, FLOOR_LEVELS, RESOURCE_KINDS, complexityOf, uid } from '../types';
@@ -195,6 +197,7 @@ export default function Tab2Bop() {
           <Tip id="merge" />
           <button className="btn" disabled={!canUnmerge} onClick={unmerge}>⊟ Unmerge / expand</button>
           <button className="btn" disabled={!sel.size} onClick={() => { if (window.confirm(`Delete ${sel.size} selected row(s)?`)) removeRows([...sel]); }}>Delete selected</button>
+          <button className="btn" onClick={async () => { try { const blob = await exportBop(ws, m); download(`${fileSafe(ws.meta.name)}-BOP.xlsx`, blob, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); } catch { toast('warn', 'BOP export failed — check the browser console for details.'); } }}>Export BOP (.xlsx)</button>
           {sel.size > 0 && <span className="text-[12px] tabular-nums text-slate-500">{sel.size} selected <button className="btn-ghost" onClick={() => setSel(new Set())}>clear</button></span>}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />

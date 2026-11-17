@@ -1,6 +1,6 @@
 // Worked pre-loaded dataset: PMA / UMA Heavy Assembly Baseline (6 cells, 8 FPDs).
 import type {
-  ActionType, BopRow, Cell, Classification, Component, Fpd, Resource, ResourceKind, Settings, Workspace, Zone,
+  ActionType, Ancillary, AncillaryKind, BopRow, Cell, Classification, Component, Fpd, Resource, ResourceKind, Settings, Workspace, Zone,
 } from '../types';
 import { APP_VERSION, WORKSPACE_SCHEMA, uid } from '../types';
 
@@ -231,9 +231,10 @@ export function blankWorkspace(): Workspace {
     pfmea: [],
     holdPoints: [],
     assumptions: [],
+    ancillaries: [],
     gateSignoffs: {},
     mitigations: {},
-    layout: { snapM: 0.5, image: null, shapes: [] },
+    layout: { snapM: 0.5, image: null, shapes: [], floors: [], floorAreaOverrideM2: null },
   };
 }
 
@@ -249,6 +250,7 @@ export function seedWorkspace(): Workspace {
     components: structuredClone(components),
     resources: structuredClone(resources),
     rows: structuredClone(rows),
+    ancillaries: [],
     pfmea: [
       { id: 'P1', fpdId: 'F5', opId: 'F5-090', failureMode: 'Closure head contacts gantry hook block before clearing Level 3 landing', effect: 'Dropped / snagged load, damage to closure head sealing face, injury to slinger at height', cause: 'Required hook height exceeds 3.5 m gantry envelope with spreader beam fitted', controls: 'Lift plan review; spotter at Level 3', s: 9, o: 5, d: 5, recommendedAction: 'Re-plan lift with low-headroom round slings or lower the landing level; re-run the hook-height stack-up in Tab 4.', owner: 'Lifting Appointed Person', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['K1', 'L2', 'S1'] },
       { id: 'P9', fpdId: 'F5', opId: 'F5-090', failureMode: 'Closure head sealing face damaged on landing', effect: 'Seal leak found at hydro test; closure head removal and re-lap', cause: 'Head lowered out of level; no soft-landing packers', controls: 'Level check on spreader; landing packers in kit', s: 8, o: 2, d: 3, recommendedAction: 'Add packer check to the lift plan sign-off sheet.', owner: 'Manufacturing Engineer', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: ['L2', 'S1'] },
@@ -282,6 +284,8 @@ export function seedWorkspace(): Workspace {
     layout: {
       snapM: 0.5,
       image: null,
+      floors: [],
+      floorAreaOverrideM2: null,
       shapes: [
         { id: 'sh1', target: 'cell:C1', label: 'Cell 1', points: rect(2, 2, 14, 20) },
         { id: 'sh2', target: 'stores', label: 'Main Stores Input', points: rect(2, 22, 14, 38) },
@@ -303,4 +307,7 @@ export function blankRow(fpdId: string, opId: string, zoneId = ''): BopRow {
 }
 export function blankResource(kind: ResourceKind, id: string): Resource {
   return res(id, kind, '', '');
+}
+export function blankAncillary(kind: AncillaryKind = 'other'): Ancillary {
+  return { id: uid('anc'), name: 'New ancillary', kind, cellId: '', floorLevel: 0, lengthM: null, widthM: null, qty: 1, notes: '' };
 }

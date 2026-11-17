@@ -46,6 +46,7 @@ function normRow(r: Partial<BopRow>): BopRow {
     moveCount: Math.max(0, Math.round(n(r.moveCount))),
     notes: String(r.notes ?? ''),
   };
+  if (typeof r.baselineHrs === 'number' && Number.isFinite(r.baselineHrs)) row.baselineHrs = r.baselineHrs;
   const kids = arr<Partial<BopRow>>(r.children);
   if (kids.length) row.children = kids.map((k) => ({ ...normRow(k), children: undefined }));
   return row;
@@ -81,9 +82,16 @@ export function normaliseWorkspace(raw: unknown): Workspace {
     pfmea: arr<Record<string, unknown>>(o.pfmea).map((x) => ({ controlDocForced: false, controlDocRef: '', resourceIds: [], ...x })) as unknown as Workspace['pfmea'],
     holdPoints: arr(o.holdPoints),
     assumptions: arr(o.assumptions),
+    ancillaries: arr<Record<string, unknown>>(o.ancillaries).map((x) => ({ kind: 'other', cellId: '', floorLevel: 0, lengthM: null, widthM: null, qty: 1, notes: '', ...x })) as unknown as Workspace['ancillaries'],
     gateSignoffs: (o.gateSignoffs && typeof o.gateSignoffs === 'object' ? o.gateSignoffs : {}) as Workspace['gateSignoffs'],
     mitigations: (o.mitigations && typeof o.mitigations === 'object' ? o.mitigations : {}) as Workspace['mitigations'],
-    layout: { shapes: arr(layout.shapes), image: layout.image ?? null, snapM: typeof layout.snapM === 'number' ? layout.snapM : 0.5 },
+    layout: {
+      shapes: arr(layout.shapes),
+      image: layout.image ?? null,
+      snapM: typeof layout.snapM === 'number' ? layout.snapM : 0.5,
+      floors: arr(layout.floors),
+      floorAreaOverrideM2: layout.floorAreaOverrideM2 ?? null,
+    },
   };
 }
 
