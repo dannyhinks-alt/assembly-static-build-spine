@@ -1,15 +1,15 @@
 ## 1. Quick Start for Engineers (Offline Usage)
 
 1. **Download the Latest Offline App (1-Click Direct Link):**
-   - Open: `https://raw.githubusercontent.com/dannyhinks-alt/assembly-static-build-spine/main/Assembly_Spine_v1.html`, then use your browser's **Save Page As…** (Ctrl+S) to save it to disk.
-   - *(If transferring via corporate email, rename `Assembly_Spine_v1.html` to `Assembly_Spine_v1.txt`, send it, then rename back to `Assembly_Spine_v1.html`.)*
+   - Open: `https://github.com/dannyhinks-alt/assembly-static-build-spine/raw/main/dist-offline/index.html`
+   - *(If transferring via corporate email, rename `index.html` to `index.txt`, send it, then rename back to `index.html`.)*
 2. **Open in Microsoft Edge or Chrome:**
-   - Double-click `Assembly_Spine_v1.html` locally—runs 100% offline with zero internet or CDN calls.
+   - Double-click `index.html` locally—runs 100% offline with zero internet or CDN calls.
 
 ## 2. Standard Solo Workflow & Automated Rules for `claude.ai/code`
 
 - **Single-Branch Policy (`main`):** Always commit and push directly to `main` and delete any stale `claude/*` feature branches (`git push origin --delete <branch> || true`) so `main` stays our single clean branch with no open PRs. Push fast-forward where possible; only force-push (`git push -f origin main`) when you have deliberately rewritten `main`'s history yourself and know what you are discarding.
-- **Offline Single-File Build:** Every code change MUST rebuild and force-commit the single-file offline app (`npm run build:pages && git add -f Assembly_Spine_v1.html docs/index.html`). Zero external runtime CDNs are permitted.
+- **Offline Single-File Build:** Every code change MUST rebuild and force-commit `dist-offline/index.html` (`npm run build:offline && git add -f dist-offline/index.html`). Zero external runtime CDNs are permitted.
 - **Domain & Language Standards:**
   - Use **British English** throughout (`utilisation`, `despatch`, `analyse`, `programme`, `£`, `m²`).
   - Never use retail terminology; use **Product Family / FPD / Variant**.

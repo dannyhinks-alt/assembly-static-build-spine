@@ -12,6 +12,8 @@ export default defineConfig(({ mode }) => ({
     target: 'es2020',
     outDir: mode === 'static' ? 'dist-static' : 'dist',
     chunkSizeWarningLimit: 4000,
+    // Single-file builds have no preload links; dropping the polyfill keeps the app free of any network call.
+    modulePreload: mode === 'static' ? undefined : { polyfill: false },
   },
   test: { environment: 'node', include: ['src/**/*.test.ts'] },
 }));
