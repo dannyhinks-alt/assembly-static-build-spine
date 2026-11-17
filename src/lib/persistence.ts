@@ -1,6 +1,6 @@
 // Local-first persistence: File System Access API auto-save with localStorage fallback.
 import { defaultSettings, seedWorkspace } from '../data/seed';
-import type { BopRow, Workspace } from '../types';
+import type { BopRow, FloorPlan, LayoutShape, Workspace } from '../types';
 import { APP_VERSION, WORKSPACE_SCHEMA } from '../types';
 
 export const LS_KEY = 'asbcs.workspace.v2';
@@ -85,14 +85,21 @@ export function normaliseWorkspace(raw: unknown): Workspace {
     ancillaries: arr<Record<string, unknown>>(o.ancillaries).map((x) => ({ kind: 'other', cellId: '', floorLevel: 0, lengthM: null, widthM: null, qty: 1, notes: '', ...x })) as unknown as Workspace['ancillaries'],
     gateSignoffs: (o.gateSignoffs && typeof o.gateSignoffs === 'object' ? o.gateSignoffs : {}) as Workspace['gateSignoffs'],
     mitigations: (o.mitigations && typeof o.mitigations === 'object' ? o.mitigations : {}) as Workspace['mitigations'],
-    layout: {
-      shapes: arr(layout.shapes),
-      image: layout.image ?? null,
-      snapM: typeof layout.snapM === 'number' ? layout.snapM : 0.5,
-      floors: arr(layout.floors),
-      floorAreaOverrideM2: layout.floorAreaOverrideM2 ?? null,
-      sideElevationImage: layout.sideElevationImage ?? null,
-    },
+    layout: (() => {
+      let floors = arr<FloorPlan>(layout.floors);
+      if (floors.length === 0) {
+        // Migrate flat image/shapes to the ground floor
+        floors = [{ id: 'fp-0', name: 'Ground Floor', elevationM: 0, image: layout.image ?? null, shapes: arr<LayoutShape>(layout.shapes) }];
+      }
+      return {
+        shapes: floors[0].shapes,
+        image: floors[0].image,
+        snapM: typeof layout.snapM === 'number' ? layout.snapM : 0.5,
+        floors,
+        floorAreaOverrideM2: layout.floorAreaOverrideM2 ?? null,
+        sideElevationImage: layout.sideElevationImage ?? null,
+      };
+    })(),
   };
 }
 

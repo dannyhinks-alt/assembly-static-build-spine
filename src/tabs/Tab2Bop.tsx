@@ -56,6 +56,11 @@ export default function Tab2Bop() {
   const [q, setQ] = useState('');
   const [cls, setCls] = useState<'' | Classification>('');
   const [only, setOnly] = useState<'' | 'lift' | 'critical' | 'ar' | 'block'>('');
+  // Bulk edit state
+  const [bulkZone, setBulkZone] = useState('');
+  const [bulkFloor, setBulkFloor] = useState('');
+  const [bulkClass, setBulkClass] = useState<'' | Classification>('');
+  const [bulkCrew, setBulkCrew] = useState<number | null>(null);
 
   const known = useMemo(() => opIndex(ws.rows), [ws.rows]);
   const zoneOpts = useMemo(() => [{ value: '', label: '—' }, ...ws.zones.map((z) => { const c = ws.cells.find((x) => x.id === z.cellId); return { value: z.id, label: z.name, group: c ? `Cell ${c.number} · ${c.name}` : 'No cell' }; })], [ws.zones, ws.cells]);
@@ -147,6 +152,24 @@ export default function Tab2Bop() {
     setSel(new Set());
   };
 
+  const resetBulk = () => { setBulkZone(''); setBulkFloor(''); setBulkClass(''); setBulkCrew(null); };
+  const applyBulkEdit = () => {
+    if (!sel.size) return;
+    const ids = [...sel];
+    mutate((d) => {
+      for (const id of ids) {
+        const r = d.rows.find((x) => x.id === id);
+        if (!r || r.children?.length) continue; // skip blocks
+        if (bulkZone) r.destZoneId = bulkZone;
+        if (bulkFloor !== '') r.floorLevel = Number(bulkFloor);
+        if (bulkClass) r.classification = bulkClass;
+        if (bulkCrew != null) r.crewSize = Math.max(1, Math.round(bulkCrew));
+      }
+    });
+    toast('ok', `Batch update applied to ${ids.length} row(s).`);
+    resetBulk();
+  };
+
   const match = (r: BopRow) => {
     const calc = m.calcs.get(r.id);
     const node = m.cpm.nodes.get(r.id);
@@ -198,7 +221,7 @@ export default function Tab2Bop() {
           <button className="btn" disabled={!canUnmerge} onClick={unmerge}>⊟ Unmerge / expand</button>
           <button className="btn" disabled={!sel.size} onClick={() => { if (window.confirm(`Delete ${sel.size} selected row(s)?`)) removeRows([...sel]); }}>Delete selected</button>
           <button className="btn" onClick={async () => { try { const blob = await exportBop(ws, m); download(`${fileSafe(ws.meta.name)}-BOP.xlsx`, blob, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); } catch { toast('warn', 'BOP export failed — check the browser console for details.'); } }}>Export BOP (.xlsx)</button>
-          {sel.size > 0 && <span className="text-[12px] tabular-nums text-slate-500">{sel.size} selected <button className="btn-ghost" onClick={() => setSel(new Set())}>clear</button></span>}
+          {sel.size > 0 && <span className="text-[12px] tabular-nums text-slate-500">{sel.size} selected <button className="btn-ghost" onClick={() => { setSel(new Set()); resetBulk(); }}>clear</button></span>}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />
             <div className="w-36"><Select value={cls} onChange={setCls} ariaLabel="Classification filter" options={[{ value: '', label: 'All classes' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: c.value }))]} /></div>
@@ -206,6 +229,21 @@ export default function Tab2Bop() {
           </div>
         </div>
 
+        {sel.size >= 2 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-sky-50 px-3 py-1.5">
+            <span className="text-[12px] font-semibold text-sky-800">Batch update {sel.size} rows:</span>
+            <span className="text-[12px] text-slate-600">Zone</span>
+            <div className="w-44"><Select value={bulkZone} onChange={setBulkZone} options={[{ value: '', label: 'No change' }, ...zoneOpts.filter((o) => o.value)]} ariaLabel="Batch destination zone" /></div>
+            <span className="text-[12px] text-slate-600">Floor</span>
+            <div className="w-32"><Select value={bulkFloor} onChange={setBulkFloor} options={[{ value: '', label: 'No change' }, ...FLOOR_LEVELS.map((l, i) => ({ value: String(i), label: l }))]} ariaLabel="Batch floor level" /></div>
+            <span className="text-[12px] text-slate-600">Class</span>
+            <div className="w-40"><Select value={bulkClass} onChange={(v) => setBulkClass(v as '' | Classification)} options={[{ value: '', label: 'No change' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: CLASS_LONG[c.value] }))]} ariaLabel="Batch classification" /></div>
+            <span className="text-[12px] text-slate-600">Crew</span>
+            <NumInput value={bulkCrew} nullable min={1} onChange={setBulkCrew} width={52} ariaLabel="Batch crew size" />
+            <button className="btn-primary" onClick={applyBulkEdit} disabled={!bulkZone && bulkFloor === '' && !bulkClass && bulkCrew == null}>Apply</button>
+            <button className="btn-ghost" onClick={resetBulk}>Reset</button>
+          </div>
+        )}
         {m.fpds.length === 0 ? (
           <div className="p-4"><Empty>No FPDs in the current Spine Filter. Widen the filter above or activate FPDs in Tab 3.</Empty></div>
         ) : (

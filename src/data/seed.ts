@@ -1,5 +1,5 @@
 import type {
-  Ancillary, AncillaryKind, BopRow, Resource, ResourceKind, Settings, Workspace,
+  Ancillary, AncillaryKind, BopRow, FloorPlan, Resource, ResourceKind, Settings, Workspace,
 } from '../types';
 import { APP_VERSION, WORKSPACE_SCHEMA, uid } from '../types';
 
@@ -42,7 +42,7 @@ export function blankWorkspace(): Workspace {
     ancillaries: [],
     gateSignoffs: {},
     mitigations: {},
-    layout: { snapM: 0.5, image: null, shapes: [], floors: [], floorAreaOverrideM2: null },
+    layout: { snapM: 0.5, image: null, shapes: [], floors: [{ id: 'fp-0', name: 'Ground Floor', elevationM: 0, image: null, shapes: [] } as FloorPlan], floorAreaOverrideM2: null },
   };
 }
 
