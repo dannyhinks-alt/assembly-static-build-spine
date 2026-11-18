@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Card, Empty, HowItWorks, Kpi, Pill, RagBadge, TextInput, Th, Tip } from '../components/primitives';
-import { buildSummary, computeGates, controlDocMissing, isBlindSpot, overallRag, routeToGreen, rpnOf, rpnRag, type Gate } from '../engine/gates';
+import { GateRow } from '../components/GateRow';
+import { ExecutiveRiskCards } from '../components/ExecutiveRiskCards';
+import { buildSummary, computeGates, isBlindSpot, overallRag, routeToGreen, rpnOf, rpnRag } from '../engine/gates';
 import { dutyRag } from '../engine/model';
-import { RAG_HEX, RAG_LABEL, fmt, fmtDate, fmtGbp, fmtInt, fmtPct } from '../lib/format';
+import { RAG_HEX, RAG_LABEL, fmt, fmtGbp, fmtInt, fmtPct } from '../lib/format';
 import { download, fileSafe, stamp } from '../lib/persistence';
 import { useStore } from '../store';
 import type { Rag } from '../types';
@@ -16,15 +18,6 @@ const VERDICT: Record<Rag, string> = {
 };
 const CLS = { VA: '#334155', NNVA: '#94a3b8', NVA: '#d03b3b' } as const;
 
-function Bar({ label, value, max, text, colour = '#475569', title }: { label: string; value: number; max: number; text: string; colour?: string; title?: string }) {
-  return (
-    <div title={title ?? `${label}: ${text}`}>
-      <div className="flex items-baseline justify-between gap-2 text-[12px]"><span className="truncate text-slate-800">{label}</span><span className="shrink-0 tabular-nums text-slate-600">{text}</span></div>
-      <div className="mt-0.5 h-2 w-full rounded-sm bg-slate-100"><div className="h-2 rounded-sm" style={{ width: `${max > 0 ? Math.min(100, (value / max) * 100) : 0}%`, backgroundColor: colour }} /></div>
-    </div>
-  );
-}
-
 export default function Tab9Executive() {
   const { ws, mutate, model: m, integrity, scope, setTab, toast } = useStore();
   const gates = useMemo(() => computeGates(ws, m, integrity), [ws, m, integrity]);
@@ -36,7 +29,6 @@ export default function Tab9Executive() {
   const t = m.totals;
   const th = ws.settings.thresholds;
   const signed = gates.filter((g) => ws.gateSignoffs[g.id]).length;
-  const sp = m.space;
 
   const exportSummary = () => {
     download(`${fileSafe(ws.meta.factoryId || 'F4')}_summary-V2_${stamp()}.json`, JSON.stringify(buildSummary(ws, integrity), null, 2));
@@ -48,7 +40,6 @@ export default function Tab9Executive() {
   const inScope = new Set(m.fpds.map((f) => f.fpdId));
   const openPf = ws.pfmea.filter((p) => p.status !== 'Closed' && (!p.fpdId || inScope.has(p.fpdId)));
   const maxRpn = openPf.reduce((a, p) => Math.max(a, rpnOf(p)), 0);
-  const band = (r: Rag) => openPf.filter((p) => rpnRag(rpnOf(p), ws.settings) === r).length;
   const blocks = [...m.calcs.values()].sort((a, b) => b.labourHrs - a.labourHrs);
   const topBlocks = blocks.slice(0, 12);
   const restHrs = blocks.slice(12).reduce((a, c) => a + c.labourHrs, 0);
@@ -56,13 +47,6 @@ export default function Tab9Executive() {
   const topShare = t.labourHrs ? (topBlocks.reduce((a, c) => a + c.labourHrs, 0) / t.labourHrs) * 100 : 0;
   const liftRag = m.lifts.reduce<Rag>((w, l) => (['green', 'amber', 'serious', 'red'].indexOf(l.rag) > ['green', 'amber', 'serious', 'red'].indexOf(w) ? l.rag : w), 'green');
   const nLift = (f: (l: (typeof m.lifts)[number]) => boolean) => m.lifts.filter(f).length;
-  const liftRows: [string, number][] = [
-    ['Heavy', nLift((l) => l.heavy)], ['Multi-person', nLift((l) => l.multiPerson)], ['Complex', nLift((l) => l.complex)], ['Multi-tool / tandem', nLift((l) => l.multiTool)],
-    ['3D elevation', nLift((l) => l.highElevation)], ['Above 90% SWL', nLift((l) => l.utilPct != null && l.utilPct > 90)], ['Hook-height breach', nLift((l) => l.hookBreach)],
-  ];
-  const vehicles = ws.resources.filter((r) => r.kind === 'vehicle').map((v) => ({ name: v.name, moves: sp.moves.filter((x) => x.vehicleIds.includes(v.id)).reduce((a, x) => a + x.moves, 0) })).filter((v) => v.moves > 0);
-  const sev = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((s) => ({ s, n: openPf.filter((p) => p.s === s).length })).filter((x) => x.n > 0 || x.s >= 7);
-  const saving = sp.spaghettiM ? (1 - sp.spaghettiFutureM / sp.spaghettiM) * 100 : 0;
 
   return (
     <div>
@@ -171,55 +155,7 @@ export default function Tab9Executive() {
           <p className="mt-2 text-[11.5px] text-slate-500">Duty Cycle % = Shifts Used ÷ Programme Shifts. {used.filter((r) => r.highRisk).length} HIGH RISK resource(s); mitigation strategies are recorded in <button className="underline hover:text-slate-800" onClick={() => setTab(8)}>Tab 8</button>.</p>
         </Card>
 
-        <Card title="Deep Movement & Lift Breakdown" guide="moveBreakdown">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div>
-              <div className="lbl mb-1.5">Lift operations by flag ({m.lifts.length} ops · {t.lifts} lifts)</div>
-              <div className="space-y-1.5">{liftRows.map(([label, n]) => <Bar key={label} label={label} value={n} max={Math.max(1, m.lifts.length)} text={`${n} op${n === 1 ? '' : 's'}`} colour={label === 'Hook-height breach' && n ? RAG_HEX.red : label === 'Above 90% SWL' && n ? RAG_HEX.serious : '#475569'} />)}</div>
-            </div>
-            <div>
-              <div className="lbl mb-1.5">Movement ({fmtInt(sp.interCellMoves + sp.intraCellMoves)} moves)</div>
-              <div className="space-y-1.5">
-                <Bar label="Inter-cell moves" value={sp.interCellMoves} max={sp.interCellMoves + sp.intraCellMoves} text={`${fmtInt(sp.interCellMoves)} · ${fmtInt(sp.interCellM)} m`} />
-                <Bar label="Intra-cell moves" value={sp.intraCellMoves} max={sp.interCellMoves + sp.intraCellMoves} text={`${fmtInt(sp.intraCellMoves)} · ${fmtInt(sp.intraCellM)} m`} />
-                {vehicles.map((v) => <Bar key={v.name} label={v.name} value={v.moves} max={sp.interCellMoves + sp.intraCellMoves} text={`${fmtInt(v.moves)} moves`} colour="#94a3b8" />)}
-              </div>
-              <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-2.5 py-2 text-[12px] tabular-nums text-slate-700">
-                Spaghetti distance <b className="text-slate-900">{fmtInt(sp.spaghettiM)} m</b> current → <b className="text-slate-900">{fmtInt(sp.spaghettiFutureM)} m</b> future ({fmtPct(saving, 0)} saving) · {sp.clashes.length} spatial clash(es)
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 flex gap-2"><button className="btn-ghost" onClick={() => setTab(4)}>Lift &amp; movement detail →</button><button className="btn-ghost" onClick={() => setTab(7)}>Layout view →</button></div>
-        </Card>
-
-        <Card title="PFMEA Risk Profile" guide="pfmeaProfile">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div>
-              <div className="lbl mb-1.5">Open failure modes by RPN band ({openPf.length})</div>
-              <div className="space-y-1.5">
-                {(['red', 'serious', 'amber', 'green'] as Rag[]).map((r) => (
-                  <div key={r} className="grid grid-cols-[84px_minmax(0,1fr)_24px] items-center gap-2" title={`${RAG_LABEL[r]}: ${band(r)} open failure mode(s)`}>
-                    <RagBadge rag={r} />
-                    <span className="h-3 rounded-sm bg-slate-100"><span className="block h-3 rounded-sm" style={{ width: `${openPf.length ? (band(r) / openPf.length) * 100 : 0}%`, backgroundColor: RAG_HEX[r] }} /></span>
-                    <span className="text-right text-[12px] tabular-nums text-slate-800">{band(r)}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 space-y-1 text-[12px] text-slate-700">
-                <div className="flex justify-between"><span>Closed</span><b className="tabular-nums text-slate-900">{ws.pfmea.filter((p) => p.status === 'Closed' && (!p.fpdId || inScope.has(p.fpdId))).length}</b></div>
-                <div className="flex justify-between"><span>High-severity blind spots (S ≥ {th.blindSpotSeverity}, Green RPN)</span><b className="tabular-nums text-slate-900">{openPf.filter((p) => isBlindSpot(p, ws.settings)).length}</b></div>
-                <div className="flex justify-between"><span>Required control documents missing</span><b className="tabular-nums text-slate-900">{openPf.filter((p) => controlDocMissing(p, ws.settings)).length}</b></div>
-              </div>
-            </div>
-            <div>
-              <div className="lbl mb-1.5">Open failure modes by Severity</div>
-              <div className="space-y-1">
-                {sev.map((x) => <Bar key={x.s} label={`Severity ${x.s}${x.s >= th.blindSpotSeverity ? ' · watch' : ''}`} value={x.n} max={Math.max(1, ...sev.map((y) => y.n))} text={String(x.n)} colour={x.s >= th.blindSpotSeverity ? '#0f172a' : '#94a3b8'} />)}
-              </div>
-            </div>
-          </div>
-          <div className="mt-2"><button className="btn-ghost" onClick={() => setTab(5)}>PFMEA register →</button></div>
-        </Card>
+        <ExecutiveRiskCards ws={ws} m={m} setTab={setTab} />
       </div>
 
       <Card className="mt-4" collapseKey="fpdRoll" title="Per-FPD Roll-Up" guide="fpdRoll" pad={false}>
@@ -278,47 +214,3 @@ export default function Tab9Executive() {
   );
 }
 
-function GateRow({ gate: g, onOpen }: { gate: Gate; onOpen: () => void }) {
-  const { ws, mutate } = useStore();
-  const so = ws.gateSignoffs[g.id];
-  const [by, setBy] = useState('');
-  const [comment, setComment] = useState('');
-  const sign = () => {
-    if (!by.trim()) return;
-    mutate((d) => { d.gateSignoffs[g.id] = { by: by.trim(), on: new Date().toISOString(), comment: `${comment.trim()}${comment.trim() ? ' ' : ''}[signed at ${RAG_LABEL[g.rag]}]` }; });
-    setBy('');
-    setComment('');
-  };
-  return (
-    <div className="px-4 py-2.5">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-100 text-[11.5px] font-bold tabular-nums text-slate-700">{g.n}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13px] font-semibold text-slate-900">Gate {g.n} · {g.title}</span>
-            <Tip id={g.guide} />
-            <RagBadge rag={g.rag} />
-            <button className="btn-ghost ml-auto" onClick={onOpen}>Tab {g.tab} →</button>
-          </div>
-          <div className="mt-0.5 text-[12.5px] leading-snug text-slate-700">{g.detail}</div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px]">
-            <span className="flex items-center gap-1"><span className="lbl">Sign-off</span><Tip id="signoff" /></span>
-            {so ? (
-              <>
-                <span className="text-slate-900"><b>{so.by}</b> <span className="text-slate-500">· {fmtDate(so.on)}</span></span>
-                {so.comment && <span className="break-words text-slate-600">{so.comment}</span>}
-                <button className="btn-ghost" onClick={() => mutate((d) => { delete d.gateSignoffs[g.id]; })}>Clear</button>
-              </>
-            ) : (
-              <>
-                <input className="inp !w-32 !py-0.5" placeholder="Name / role" value={by} onChange={(e) => setBy(e.target.value)} aria-label={`Gate ${g.n} signatory`} />
-                <input className="inp !w-auto min-w-[120px] flex-1 !py-0.5" placeholder="Comment (optional)" value={comment} onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sign()} aria-label={`Gate ${g.n} comment`} />
-                <button className="btn !py-0.5" disabled={!by.trim()} onClick={sign}>Sign</button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
