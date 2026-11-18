@@ -4,6 +4,8 @@ import { buildModel, learningFactor, rollUpBlock } from './model';
 import { buildSummary } from './gates';
 import { runIntegrity } from './integrity';
 import { baselineFixture } from './testFixture';
+import { scanHeaderRow, buildImport } from '../lib/excel';
+import type { ParsedWorkbook } from '../lib/excel';
 
 describe('baseline dataset', () => {
   const ws = baselineFixture();
@@ -116,5 +118,146 @@ describe('baseline dataset', () => {
     expect(after.totals.activities).toBe(before.totals.activities);
     expect(after.totals.workBlocks).toBe(before.totals.workBlocks - 2);
     expect(runIntegrity(w).checks.find((c) => c.key === 'merge')!.pass).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------- Excel import
+describe('Master BOP Row-4 import', () => {
+  it('scanHeaderRow picks a row-4 header (index 3) over garbage preamble rows', () => {
+    const aoa: unknown[][] = [
+      ['Company ABC', '', '', ''],
+      ['Document: Master BOP v2.0', '', '', ''],
+      ['Issued: 2026-01', '', '', ''],
+      ['Phase #', 'Route Code', 'Operation Phase Title', 'Crew Density', 'Labour Content (Hours)'],
+      ['P1', '010', 'Jig installation', '2', '1.5'],
+    ];
+    expect(scanHeaderRow(aoa)).toBe(3);
+  });
+
+  it('scanHeaderRow returns 0 when no strong signals are present', () => {
+    const aoa: unknown[][] = [
+      ['A', 'B', 'C'],
+      ['1', '2', '3'],
+    ];
+    expect(scanHeaderRow(aoa)).toBe(0);
+  });
+
+  it('scanHeaderRow handles a combined BOP+PFMEA header with Failure Mode', () => {
+    const aoa: unknown[][] = [
+      ['Phase #', 'Route Code', 'Operation Phase Title', 'Crew Density', 'Failure Mode', 'Severity (1-10)', 'Occurrence (1-10)'],
+    ];
+    expect(scanHeaderRow(aoa)).toBe(0);
+  });
+
+  it('buildImport skips blank template rows (empty Route Code and Title)', () => {
+    const ws = baselineFixture();
+    const fpd = ws.fpds[0];
+    const parsed: ParsedWorkbook = {
+      fileName: 'test.xlsx',
+      errorCells: [],
+      sheets: {
+        bop: [
+          { 'Phase #': fpd.fpdCode, 'Route Code': '010', 'Operation Phase Title': 'Real op', 'Labour Content (Hours)': '1', 'Crew Density': '1', 'Failure Mode': '' },
+          { 'Phase #': '', 'Route Code': '', 'Operation Phase Title': '', 'Labour Content (Hours)': '', 'Crew Density': '' },
+          { 'Phase #': fpd.fpdCode, 'Route Code': 'None', 'Operation Phase Title': 'None', 'Labour Content (Hours)': '', 'Crew Density': '' },
+          { 'Phase #': fpd.fpdCode, 'Route Code': '020', 'Operation Phase Title': 'Real op 2', 'Labour Content (Hours)': '0.5', 'Crew Density': '1', 'Failure Mode': '' },
+        ],
+      },
+    };
+    const result = buildImport(parsed, ws, 'replace');
+    const added = result.ws.rows.filter((r) => r.fpdId === fpd.fpdId);
+    expect(added.length).toBe(2);
+    expect(added.map((r) => r.opId.endsWith('010') || r.opId.endsWith('020')).every(Boolean)).toBe(true);
+  });
+
+  it('buildImport maps methodDetail, rationale and consumables from dedicated columns', () => {
+    const ws = baselineFixture();
+    const fpd = ws.fpds[0];
+    const parsed: ParsedWorkbook = {
+      fileName: 'test.xlsx',
+      errorCells: [],
+      sheets: {
+        bop: [
+          {
+            'Phase #': fpd.fpdCode,
+            'Route Code': '010',
+            'Operation Phase Title': 'Install jig',
+            'Labour Content (Hours)': '1',
+            'Crew Density': '2',
+            'Detailed Method Steps': 'Step 1: position jig. Step 2: torque bolts.',
+            'Rationale': 'Required per drawing ABC-001',
+            'Consumables': 'M10 bolts × 4',
+            'Comments': 'Check alignment first',
+            'Failure Mode': '',
+          },
+        ],
+      },
+    };
+    const result = buildImport(parsed, ws, 'replace');
+    const row = result.ws.rows.find((r) => r.fpdId === fpd.fpdId);
+    expect(row?.methodDetail).toBe('Step 1: position jig. Step 2: torque bolts.');
+    expect(row?.rationale).toBe('Required per drawing ABC-001');
+    expect(row?.consumables).toBe('M10 bolts × 4');
+    expect(row?.notes).toBe('Check alignment first');
+    expect(row?.crewSize).toBe(2);
+  });
+
+  it('buildImport creates PFMEA entry when Failure Mode is populated on a BOP row', () => {
+    const ws = baselineFixture();
+    const fpd = ws.fpds[0];
+    const parsed: ParsedWorkbook = {
+      fileName: 'test.xlsx',
+      errorCells: [],
+      sheets: {
+        bop: [
+          {
+            'Phase #': fpd.fpdCode,
+            'Route Code': '010',
+            'Operation Phase Title': 'Install jig',
+            'Labour Content (Hours)': '1',
+            'Crew Density': '1',
+            'Failure Mode': 'Incorrect torque applied',
+            'Effect of Failure': 'Joint failure in service',
+            'Cause of Failure': 'No torque spec on drawing',
+            'Severity (1-10)': '8',
+            'Occurrence (1-10)': '4',
+            'Detection (1-10)': '3',
+          },
+        ],
+      },
+    };
+    const before = ws.pfmea.length;
+    const result = buildImport(parsed, ws, 'replace');
+    expect(result.ws.pfmea.length).toBe(before + 1);
+    const p = result.ws.pfmea.find((x) => x.failureMode === 'Incorrect torque applied')!;
+    expect(p).toBeTruthy();
+    expect(p.effect).toBe('Joint failure in service');
+    expect(p.s).toBe(8);
+    expect(p.o).toBe(4);
+    expect(p.d).toBe(3);
+  });
+
+  it('buildImport auto-prefixes duplicate Route Codes across phases', () => {
+    const ws = baselineFixture();
+    const fpd1 = ws.fpds[0];
+    const fpd2 = ws.fpds[1] ?? { ...fpd1, fpdId: 'fpd-test-2', fpdCode: 'F2-TST' };
+    if (!ws.fpds[1]) ws.fpds.push(fpd2);
+    const parsed: ParsedWorkbook = {
+      fileName: 'test.xlsx',
+      errorCells: [],
+      sheets: {
+        bop: [
+          { 'Phase #': fpd1.fpdCode, 'Route Code': '010', 'Operation Phase Title': 'Op A', 'Labour Content (Hours)': '1', 'Crew Density': '1', 'Failure Mode': '' },
+          { 'Phase #': fpd1.fpdCode, 'Route Code': '020', 'Operation Phase Title': 'Op B', 'Labour Content (Hours)': '1', 'Crew Density': '1', 'Failure Mode': '' },
+          { 'Phase #': fpd2.fpdCode, 'Route Code': '010', 'Operation Phase Title': 'Op C', 'Labour Content (Hours)': '1', 'Crew Density': '1', 'Failure Mode': '' },
+          { 'Phase #': fpd2.fpdCode, 'Route Code': '020', 'Operation Phase Title': 'Op D', 'Labour Content (Hours)': '1', 'Crew Density': '1', 'Failure Mode': '' },
+        ],
+      },
+    };
+    const result = buildImport(parsed, ws, 'replace');
+    const opIds = result.ws.rows.filter((r) => r.fpdId === fpd1.fpdId || r.fpdId === fpd2.fpdId).map((r) => r.opId);
+    // All four Op IDs must be unique — auto-prefix prevents collisions
+    expect(new Set(opIds).size).toBe(opIds.length);
+    expect(opIds.some((id) => id.includes('-'))).toBe(true);
   });
 });

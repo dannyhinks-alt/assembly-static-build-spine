@@ -47,6 +47,9 @@ function normRow(r: Partial<BopRow>): BopRow {
     notes: String(r.notes ?? ''),
   };
   if (typeof r.baselineHrs === 'number' && Number.isFinite(r.baselineHrs)) row.baselineHrs = r.baselineHrs;
+  if (typeof r.methodDetail === 'string') row.methodDetail = r.methodDetail;
+  if (typeof r.rationale === 'string') row.rationale = r.rationale;
+  if (typeof r.consumables === 'string') row.consumables = r.consumables;
   const kids = arr<Partial<BopRow>>(r.children);
   if (kids.length) row.children = kids.map((k) => ({ ...normRow(k), children: undefined }));
   return row;

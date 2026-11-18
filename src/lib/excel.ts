@@ -1,4 +1,4 @@
-// Excel (.xlsx) import / export. SheetJS is bundled locally and loaded on demand — no CDN.
+// Excel (.xlsx / .xlsm / .xls / .csv) import / export. SheetJS is bundled locally and loaded on demand — no CDN.
 import { blankResource, blankRow } from '../data/seed';
 import type { Model } from '../engine/model';
 import { leavesOf } from '../engine/model';
@@ -11,6 +11,7 @@ const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 const str = (v: unknown) => (v == null ? '' : String(v).trim());
 const list = (v: unknown) => str(v).split(/[;,\n]+/).map((s) => s.trim()).filter((s) => s && s.toLowerCase() !== 'none');
 const yes = (v: unknown, dflt = true) => { const s = str(v).toLowerCase(); return s === '' ? dflt : ['y', 'yes', 'true', '1', 'active'].includes(s); };
+const noneOrEmpty = (s: string) => !s || s.toLowerCase() === 'none';
 
 /** Read a column by any of its accepted header spellings. */
 function col(r: Row, ...names: string[]): unknown {
@@ -30,25 +31,62 @@ export interface ParsedWorkbook { fileName: string; sheets: Record<string, Row[]
 const SHEET_KINDS: [RegExp, string][] = [
   [/pfmea|fmea|risk/i, 'pfmea'],
   [/fpd|document|registry/i, 'fpds'],
-  [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],  // combined Master BOP & PFMEA sheet
-  [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],  // 'ktp' kept for legacy sheet names
+  [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],
+  [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],
   [/component|bom|part/i, 'components'],
   [/resource|equipment|crane|tool/i, 'resources'],
 ];
 
-/** Scan the first 15 rows of a sheet to find the actual header row. */
-function scanHeaderRow(aoa: unknown[][]): number {
-  const SIGNALS = ['route code', 'phase #', 'operation phase title', 'op #', 'fpd code', 'failure mode', 'bom ref', 'name', 'kind', 'resource'];
+/** Strong header signals that identify a row as the actual column-header row. */
+const STRONG_HEADERS = [
+  'phase #', 'route code', 'operation phase title', 'crew density', 'operation action category',
+  'specific action type', 'labour content (hours)', 'failure mode', 'severity (1-10)', 'op #', 'fpd code',
+  'detailed method steps',
+];
+
+/** Score a single array-of-cells row against STRONG_HEADERS. */
+function scoreHeaderRow(cells: string[]): number {
+  return STRONG_HEADERS.filter((s) => cells.some((c) => c === s || c.includes(s))).length;
+}
+
+/** Scan the first 15 rows of a sheet to find the actual header row (highest strong-signal score ≥ 2). */
+export function scanHeaderRow(aoa: unknown[][]): number {
+  const WEAK = ['route code', 'phase #', 'operation phase title', 'op #', 'fpd code', 'failure mode', 'bom ref', 'name', 'kind', 'resource'];
+  let best = { idx: -1, score: 0 };
   for (let i = 0; i < Math.min(15, aoa.length); i++) {
-    const row = aoa[i] as unknown[];
-    const rowStr = row.map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#]+/g, ' ').trim()).join(' | ');
-    if (SIGNALS.some((s) => rowStr.includes(s))) return i;
+    const cells = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#()\- ]+/g, ' ').trim());
+    const score = scoreHeaderRow(cells);
+    if (score >= 2 && score > best.score) best = { idx: i, score };
+  }
+  if (best.idx >= 0) return best.idx;
+  // Fallback: first row containing any weak signal (original behaviour).
+  for (let i = 0; i < Math.min(15, aoa.length); i++) {
+    const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#]+/g, ' ').trim()).join(' | ');
+    if (WEAK.some((s) => rowStr.includes(s))) return i;
   }
   return 0;
 }
 
+/** BOP content-scan signals used for sheet classification fallback. */
+const BOP_CONTENT_SIGNALS = ['phase #', 'route code', 'operation phase title', 'op #', 'fpd code'];
+
+function sheetToRows(XLSX: { utils: { sheet_to_json<T>(ws: unknown, opts?: unknown): T[] } }, sh: unknown): Row[] {
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
+  const hIdx = scanHeaderRow(aoa);
+  if (hIdx === 0) return XLSX.utils.sheet_to_json<Row>(sh, { defval: '' });
+  const headers = (aoa[hIdx] as unknown[]).map((v) => String(v ?? ''));
+  return (aoa.slice(hIdx + 1) as unknown[][])
+    .filter((row) => row.some((v) => v !== '' && v != null))
+    .map((row) => {
+      const obj: Row = {};
+      headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+      return obj;
+    });
+}
+
 export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
   const XLSX = await import('xlsx');
+  // XLSX handles .csv natively via the same read() call.
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
   const sheets: Record<string, Row[]> = {};
   const errorCells: string[] = [];
@@ -62,23 +100,17 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
         delete sh[addr];
       }
     }
-    const kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
-    if (kind && !sheets[kind]) {
-      // Dynamic header detection: scan first 15 rows for the real header row.
+    // Classify by sheet name first; fall back to content scan for unrecognised names.
+    let kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
+    if (!kind) {
       const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
-      const hIdx = scanHeaderRow(aoa);
-      if (hIdx === 0) {
-        sheets[kind] = XLSX.utils.sheet_to_json<Row>(sh, { defval: '' });
-      } else {
-        const headers = (aoa[hIdx] as unknown[]).map((v) => String(v ?? ''));
-        sheets[kind] = (aoa.slice(hIdx + 1) as unknown[][])
-          .filter((row) => row.some((v) => v !== '' && v != null))
-          .map((row) => {
-            const obj: Row = {};
-            headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
-            return obj;
-          });
+      for (let i = 0; i < Math.min(15, aoa.length); i++) {
+        const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase()).join(' ');
+        if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) { kind = 'bop'; break; }
       }
+    }
+    if (kind && !sheets[kind]) {
+      sheets[kind] = sheetToRows(XLSX, sh);
     }
   }
   return { fileName: file.name, sheets, errorCells };
@@ -206,11 +238,57 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
 
   // ---- BOP ----
   if (S.bop) {
-    // Auto-create a default cell if none exist so zone auto-creation has somewhere to anchor.
     if (ws.cells.length === 0) {
       ws.cells.push({ id: uid('cell'), number: 1, name: 'Main Assembly', crewPerShift: 2, notes: '' });
     }
     const c = count('BOP activities');
+    const cPfmea = count('PFMEA items (via BOP)');
+
+    // First pass: detect duplicate Route Codes across different phases and build rewrite map.
+    const routePhases = new Map<string, Set<string>>(); // rawOp -> Set of phases
+    for (const r of S.bop) {
+      const rawOp = str(col(r, 'Route Code', 'Op #', 'Route Code / Op #', 'Op ID', 'Operation'));
+      const rawPhase = str(col(r, 'Phase #', 'FPD Code', 'FPD', 'FPD Ref', 'Phase'));
+      if (!rawOp || !rawPhase) continue;
+      const phases = routePhases.get(rawOp) ?? new Set<string>();
+      phases.add(rawPhase);
+      routePhases.set(rawOp, phases);
+    }
+    const needsPrefix = [...routePhases.values()].some((ps) => ps.size > 1);
+    const opRewriteMap = new Map<string, string>(); // "phase:rawOp" -> prefixedOpId
+    if (needsPrefix) {
+      const usedIds = new Set<string>();
+      for (const r of S.bop) {
+        const rawOp = str(col(r, 'Route Code', 'Op #', 'Route Code / Op #', 'Op ID', 'Operation'));
+        const rawPhase = str(col(r, 'Phase #', 'FPD Code', 'FPD', 'FPD Ref', 'Phase'));
+        if (!rawOp || !rawPhase || (routePhases.get(rawOp)?.size ?? 0) <= 1) continue;
+        const mapKey = `${rawPhase}:${rawOp}`;
+        if (!opRewriteMap.has(mapKey)) {
+          const prefix = rawPhase.replace(/[^A-Za-z0-9]/g, '');
+          const pad = /^\d+$/.test(rawOp) ? rawOp.padStart(3, '0') : rawOp;
+          let candidate = `${prefix}-${pad}`;
+          let n = 2;
+          while (usedIds.has(candidate)) candidate = `${prefix}-${pad}-${n++}`;
+          opRewriteMap.set(mapKey, candidate);
+          usedIds.add(candidate);
+        }
+      }
+      warnings.push('Route Codes repeated across multiple phases — auto-prefixed (e.g. P1-010, P2-010). Verify predecessor links in Tab 2.');
+    }
+    const resolveOpId = (rawOp: string, rawPhase: string): string => {
+      if (!needsPrefix) return rawOp;
+      return opRewriteMap.get(`${rawPhase}:${rawOp}`) ?? rawOp;
+    };
+    const resolvePredId = (pred: string, currentPhase: string): string => {
+      if (!needsPrefix) return pred;
+      const inPhase = opRewriteMap.get(`${currentPhase}:${pred}`);
+      if (inPhase) return inPhase;
+      for (const [mapKey, val] of opRewriteMap) {
+        if (mapKey.endsWith(`:${pred}`)) return val;
+      }
+      return pred;
+    };
+
     const zoneOf = (v: unknown, op: string): string => {
       const s = str(v);
       if (!s || s.toLowerCase() === 'none') return '';
@@ -220,7 +298,6 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       const cell = cellByNumber(s);
       const first = ws.zones.find((x) => x.cellId === cell);
       if (first) return first.id;
-      // Auto-create the zone under the first cell.
       const codeMatch = s.match(/^Zone\s+([A-Z0-9]+)\s*[·\-–]\s*(.*)/i);
       const zoneName = codeMatch ? codeMatch[2].trim() || s : s;
       const zoneCode = codeMatch ? codeMatch[1].toUpperCase() : undefined;
@@ -240,14 +317,23 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       return i >= 0 ? i : Math.min(3, Math.max(0, parseInt(s.replace(/\D+/g, ''), 10) || 0));
     };
     const tags = (kind: ResourceKind, v: unknown) => list(v).map((n) => ensureRes(kind, n, true).id);
+    const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
     const flat = new Map<string, BopRow>();
     for (const r of ws.rows) for (const l of leavesOf(r)) flat.set(l.opId.trim().toLowerCase(), l);
-    // Track last destination zone per FPD for origin zone auto-link (Master BOP & PFMEA Combined import).
     const lastDestZone = new Map<string, string>();
+
     for (const r of S.bop) {
-      const op = str(col(r, 'Op #', 'Op', 'Route Code', 'Route Code / Op #', 'Op ID', 'Operation'));
-      const code = str(col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase'));
+      const rawOp = str(col(r, 'Op #', 'Op', 'Route Code', 'Route Code / Op #', 'Op ID', 'Operation'));
+      const rawTitle = str(col(r, 'Operation Phase Title', 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Work Block / Activity Description', 'Activity'));
+      const rawCode = str(col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase'));
+
+      // Skip blank template rows silently (both Route Code and Operation Phase Title empty or "None").
+      if (noneOrEmpty(rawOp) && noneOrEmpty(rawTitle)) continue;
+
+      const op = resolveOpId(rawOp, rawCode);
+      const code = rawCode;
       if (!op || !code) { if (op || code) warnings.push(`BOP row skipped — needs both FPD Code and Op # (got "${code}" / "${op}").`); continue; }
+
       const fpd = ensureFpd(code);
       let row = flat.get(op.toLowerCase());
       if (!row) {
@@ -257,11 +343,11 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
         c.added++;
       } else c.updated++;
       row.fpdId = fpd.fpdId;
-      row.description = str(col(r, 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Work Block / Activity Description', 'Activity', 'Operation Phase Title')) || row.description;
+      row.description = rawTitle || row.description;
       row.taskType = /par/i.test(str(col(r, 'Task Type', 'Type'))) ? 'Parallel' : 'Sequential';
-      row.predecessors = list(col(r, 'Predecessors', 'Predecessor #', 'Predecessor', 'Pred', 'Predecessor Phase #'));
+      row.predecessors = list(col(r, 'Predecessors', 'Predecessor #', 'Predecessor', 'Pred', 'Predecessor Phase #'))
+        .map((p) => resolvePredId(p, code));
       row.destZoneId = zoneOf(col(r, 'Destination Zone', 'Destination', 'Dest Zone', 'Destination Cell / Zone', 'Zone'), op) || row.destZoneId;
-      // Origin zone: explicit column, or auto-link from previous row's destination zone in same FPD.
       const explicitOrigin = zoneOf(col(r, 'Origin Zone', 'Origin', 'Origin Cell / Zone'), op);
       row.originZoneId = explicitOrigin || lastDestZone.get(fpd.fpdId) || row.destZoneId;
       if (row.destZoneId) lastDestZone.set(fpd.fpdId, row.destZoneId);
@@ -280,7 +366,8 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       row.runHrs = Math.max(0, num(col(r, 'Run Time (hrs)', 'Run Time', 'Equipment / Bay Run Time (hrs)', 'Run')));
       row.manningHrs = Math.max(0, num(col(r, 'Manning Time (hrs)', 'Manning Time', 'Operator Manning Time (hrs)', 'Manning', 'Labour Content (Hours)', 'Labour Content'), row.runHrs));
       row.touchHrs = Math.max(0, num(col(r, 'Touch Time (hrs)', 'Touch Time', 'Operator Touch Time (hrs)', 'Touch'), row.manningHrs));
-      if (row.touchHrs > row.manningHrs) { warnings.push(`${op}: Touch Time ${row.touchHrs} h exceeded Manning Time ${row.manningHrs} h — capped.`); row.touchHrs = row.manningHrs; }
+      if (row.touchHrs > row.manningHrs + 1e-9) { warnings.push(`${op}: Touch Time ${row.touchHrs} h exceeded Manning Time ${row.manningHrs} h — capped.`); row.touchHrs = row.manningHrs; }
+      if (str(col(r, 'Baseline Hours', 'Baseline Hrs'))) row.baselineHrs = Math.max(0, num(col(r, 'Baseline Hours', 'Baseline Hrs')));
       row.classification = classOf(col(r, 'Classification', 'Action Classification', 'VA', 'Operation Action Category'));
       row.actionType = actionOf(col(r, 'Action Type', 'Specific Action Type', 'Action'));
       row.rigIds = tags('rig', col(r, 'Process Rigs', 'Process Rigs & Tooling', 'Rigs', 'Tooling', 'L1 Parent Tool'));
@@ -291,19 +378,49 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       row.liftCount = Math.max(0, Math.round(num(col(r, 'Lifts', 'Lift Count'))));
       if (row.actionType === 'Lifting' && row.liftCount === 0) row.liftCount = 1;
       row.moveCount = Math.max(0, Math.round(num(col(r, 'Moves', 'Move Count'))));
-      row.notes = str(col(r, 'Notes', 'Engineering Notes', 'Rationale', 'Comments')) || row.notes;
-      // Quality Gate Sign-off → create a Hold Point if non-empty.
+      // Notes / Rationale / Method / Consumables — each gets its own field.
+      row.notes = str(col(r, 'Notes', 'Engineering Notes', 'Comments')) || row.notes;
+      const detailRaw = str(col(r, 'Detailed Method Steps', 'Detailed Method & Work Instruction Steps', 'Method Detail'));
+      if (detailRaw) row.methodDetail = detailRaw;
+      const rationaleRaw = str(col(r, 'Rationale'));
+      if (rationaleRaw) row.rationale = rationaleRaw;
+      const consumablesRaw = str(col(r, 'Consumables'));
+      if (consumablesRaw) row.consumables = consumablesRaw;
+      // Quality Gate Sign-off → Hold Point.
       const gateTitle = str(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
       if (gateTitle) {
         const existing = ws.holdPoints.find((h) => h.opId === op && h.title.toLowerCase() === gateTitle.toLowerCase());
-        if (!existing) {
-          ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' });
+        if (!existing) ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' });
+      }
+      // Combined PFMEA ingestion: if Failure Mode is populated on this BOP row, create/update the linked PFMEA entry.
+      const fmRaw = str(col(r, 'Failure Mode'));
+      if (fmRaw) {
+        let p = ws.pfmea.find((x) => x.opId === op && x.failureMode.toLowerCase() === fmRaw.toLowerCase());
+        if (!p) {
+          p = { id: uid('pf'), fpdId: fpd.fpdId, opId: op, failureMode: fmRaw, effect: '', cause: '', controls: '', s: 1, o: 1, d: 1, recommendedAction: '', owner: '', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: [] };
+          ws.pfmea.push(p);
+          cPfmea.added++;
+        } else cPfmea.updated++;
+        p.fpdId = fpd.fpdId;
+        const effect = str(col(r, 'Effect of Failure', 'Effect', 'Potential Effect')); if (effect) p.effect = effect;
+        const cause = str(col(r, 'Cause of Failure', 'Cause', 'Potential Cause')); if (cause) p.cause = cause;
+        const controls = str(col(r, 'Current Process Controls', 'Controls', 'Process Controls')); if (controls) p.controls = controls;
+        const action = str(col(r, 'Recommended Corrective Action', 'Recommended Action')); if (action) p.recommendedAction = action;
+        const sevRaw = str(col(r, 'Severity (1-10)', 'Severity', 'S')); if (sevRaw) p.s = sod(col(r, 'Severity (1-10)', 'Severity', 'S'));
+        const occRaw = str(col(r, 'Occurrence (1-10)', 'Occurrence', 'O')); if (occRaw) p.o = sod(col(r, 'Occurrence (1-10)', 'Occurrence', 'O'));
+        const detRaw = str(col(r, 'Detection (1-10)', 'Detection', 'D')); if (detRaw) p.d = sod(col(r, 'Detection (1-10)', 'Detection', 'D'));
+        const cdReq = str(col(r, 'Control Doc Required')); if (cdReq) p.controlDocForced = yes(cdReq);
+        const phaseSt = str(col(r, 'Phase Status')); if (phaseSt) p.status = /clos/i.test(phaseSt) ? 'Closed' : /progress/i.test(phaseSt) ? 'In Progress' : 'Open';
+        const toolId = str(col(r, 'Assigned Tooling ID'));
+        if (toolId) {
+          const res = ws.resources.find((x) => x.name.toLowerCase() === toolId.toLowerCase() || x.id === toolId);
+          if (res && !p.resourceIds.includes(res.id)) p.resourceIds.push(res.id);
         }
       }
     }
   }
 
-  // ---- PFMEA ----
+  // ---- PFMEA (dedicated sheet) ----
   if (S.pfmea) {
     const c = count('PFMEA items');
     const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
@@ -391,7 +508,7 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
   return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
-/** Dedicated BOP export: 'Bill of Process' sheet (with schedule / CPM / lift data) + 'Master BOP & PFMEA Combined' sheet. */
+/** Dedicated BOP export: 'Bill of Process (Summary)' + 'Master BOP & PFMEA Combined' — exact round-trip headers. */
 export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
@@ -400,18 +517,21 @@ export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
   const fpd = (id: string) => ws.fpds.find((f) => f.fpdId === id);
   const names = (ids: string[]) => ids.map((i) => ws.resources.find((r) => r.id === i)?.name ?? '').filter(Boolean).join('; ');
   const hpFor = (opId: string) => ws.holdPoints.filter((h) => h.opId === opId).map((h) => h.title).join('; ');
+  const pfmeaFor = (opId: string) => ws.pfmea.filter((p) => p.opId === opId);
   const sheet = (name: string, rows: Row[], widths: number[]) => {
     const sh = XLSX.utils.json_to_sheet(rows);
     sh['!cols'] = widths.map((wch) => ({ wch }));
     XLSX.utils.book_append_sheet(wb, sh, name);
   };
 
-  // ---- Bill of Process sheet ----
+  // ---- Bill of Process (Summary) sheet ----
   const bopRows: Row[] = [];
   for (const r of ws.rows) {
     for (const l of leavesOf(r)) {
       const node = m.cpm.nodes.get(r.id);
+      const calc = m.calcs.get(r.id);
       const f = fpd(l.fpdId);
+      const arPct = calc?.arPct;
       bopRows.push({
         'FPD Code': f?.fpdCode ?? '', 'FPD Title': f?.title ?? '', 'Cell Name': cellName(f?.assignedCellId ?? ''),
         'Op #': l.opId, 'Baseline Work Block': r.children?.length ? r.opId : '',
@@ -426,6 +546,7 @@ export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
         'Labour Content (Hours)': l.manningHrs,
         'Baseline Hours': l.baselineHrs ?? '',
         'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '',
+        'Attendance Ratio (%)': arPct != null ? +(arPct * 100).toFixed(1) : 'Manual op',
         'Operation Action Category': l.classification,
         'Specific Action Type': l.actionType,
         'L1 Parent Tool': names(l.rigIds),
@@ -439,38 +560,66 @@ export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
         'Float (h)': node ? +node.float.toFixed(1) : '',
         Critical: node?.critical ? 'Y' : 'N',
         'Quality Gate Sign-off': hpFor(l.opId),
-        Notes: l.notes,
+        Rationale: l.rationale ?? '',
+        Comments: l.notes,
       });
     }
   }
-  sheet('Bill of Process', bopRows, [10, 32, 24, 10, 11, 48, 10, 16, 24, 24, 10, 36, 7, 12, 13, 15, 12, 11, 12, 20, 24, 20, 20, 16, 7, 7, 14, 14, 10, 8, 24, 36]);
+  sheet('Bill of Process (Summary)', bopRows, [10, 32, 24, 10, 11, 48, 10, 16, 24, 24, 10, 36, 7, 12, 13, 15, 12, 11, 11, 15, 20, 24, 20, 20, 16, 7, 7, 14, 14, 10, 8, 24, 36, 36]);
 
-  // ---- Master BOP & PFMEA Combined sheet ----
+  // ---- Master BOP & PFMEA Combined sheet — canonical round-trip columns ----
   const combined: Row[] = [];
   for (const r of ws.rows) {
     for (const l of leavesOf(r)) {
+      const node = m.cpm.nodes.get(r.id);
       const f = fpd(l.fpdId);
+      const pfs = pfmeaFor(l.opId);
+      const pf = pfs[0]; // primary PFMEA entry for this op (if any)
       combined.push({
-        'Phase #': f?.fpdCode ?? '', 'Route Code': l.opId,
+        'Phase #': f?.fpdCode ?? '',
+        'Route Code': l.opId,
         'Operation Phase Title': l.description,
-        'Task Type': l.taskType, 'Predecessor Phase #': l.predecessors.join(', '),
+        'Detailed Method Steps': l.methodDetail ?? '',
         Zone: zone(l.destZoneId),
+        'Task Type': l.taskType,
+        'Predecessor Phase #': l.predecessors.join(', '),
         'Component Name/Description': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join('; '),
         'Crew Density': l.crewSize,
         'Equipment / Bay Run Time (hrs)': l.runHrs,
+        'Operator Touch Time (hrs)': l.touchHrs,
         'Labour Content (Hours)': l.manningHrs,
-        'Operation Action Category': l.classification,
-        'Specific Action Type': l.actionType,
-        'L1 Parent Tool': names(l.rigIds),
+        'Baseline Hours': l.baselineHrs ?? '',
+        'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '',
         Crane: names(l.craneIds),
+        'L1 Parent Tool': names(l.rigIds),
         Rigging: names(l.riggingIds),
         'L3 Sub-Tool': names(l.standIds),
+        Consumables: l.consumables ?? '',
         'Quality Gate Sign-off': hpFor(l.opId),
-        Rationale: l.notes,
+        Rationale: l.rationale ?? '',
+        Comments: l.notes,
+        'Failure Mode': pf?.failureMode ?? '',
+        'Control Doc Required': pf ? (pf.controlDocForced ? 'Y' : 'N') : '',
+        'Effect of Failure': pf?.effect ?? '',
+        'Cause of Failure': pf?.cause ?? '',
+        'Current Process Controls': pf?.controls ?? '',
+        'Recommended Corrective Action': pf?.recommendedAction ?? '',
+        'Severity (1-10)': pf?.s ?? '',
+        'Occurrence (1-10)': pf?.o ?? '',
+        'Detection (1-10)': pf?.d ?? '',
+        'RPN Score': pf ? pf.s * pf.o * pf.d : '',
+        'RPN Risk Level': pf ? (pf.s * pf.o * pf.d >= 200 ? 'RED' : pf.s * pf.o * pf.d >= 120 ? 'SERIOUS' : pf.s * pf.o * pf.d >= 80 ? 'AMBER' : 'GREEN') : '',
+        'Assigned Tooling ID': pf ? names(pf.resourceIds) : '',
+        'Phase Status': pf?.status ?? '',
+        'Schedule Start (h)': node ? +node.es.toFixed(1) : '',
+        'Schedule Finish (h)': node ? +node.ef.toFixed(1) : '',
+        Critical: node?.critical ? 'Y' : 'N',
+        'Operation Action Category': l.classification,
+        'Specific Action Type': l.actionType,
       });
     }
   }
-  sheet('Master BOP & PFMEA Combined', combined, [10, 10, 48, 10, 16, 24, 36, 7, 12, 15, 20, 24, 24, 20, 20, 16, 24, 36]);
+  sheet('Master BOP & PFMEA Combined', combined, [10, 10, 48, 36, 24, 10, 16, 36, 7, 12, 13, 15, 12, 11, 20, 24, 20, 16, 24, 24, 24, 24, 36, 10, 36, 36, 36, 44, 10, 10, 10, 8, 10, 24, 10, 14, 14, 8, 20, 24]);
 
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
   return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

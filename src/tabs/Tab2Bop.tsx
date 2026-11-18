@@ -1,15 +1,17 @@
 import type { Draft } from 'immer';
 import { Fragment, useMemo, useState } from 'react';
-import { Empty, ExpandableTextCell, HowItWorks, Kpi, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip, type TagOption } from '../components/primitives';
+import { Drawer, Empty, ExpandableTextCell, HowItWorks, Kpi, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip, type TagOption } from '../components/primitives';
 import { FpdRegistryCard } from '../components/FpdRegistry';
-import { blankRow } from '../data/seed';
+import { blankAncillary, blankResource, blankRow } from '../data/seed';
 import { isBlock, leavesOf, opIndex, rollUpBlock, type CpmNode, type LeafCalc, type RowCalc } from '../engine/model';
 import { fmt, fmtInt, fmtPct } from '../lib/format';
 import { exportBop } from '../lib/excel';
 import { download, fileSafe } from '../lib/persistence';
 import { useStore } from '../store';
-import type { BopRow, Classification, ResourceField, Workspace } from '../types';
+import type { BopRow, Classification, ResourceField, ResourceKind, Workspace } from '../types';
 import { ACTION_TYPES, CLASSIFICATIONS, FLOOR_LEVELS, RESOURCE_KINDS, complexityOf, uid } from '../types';
+
+void blankAncillary; // imported for side-effects of tree-shaking guard
 
 const CLASS_HEX: Record<Classification, string> = { VA: '#334155', NNVA: '#94a3b8', NVA: '#d03b3b' };
 const CLASS_SHORT: Record<Classification, string> = { VA: 'VA', NNVA: 'NNVA', NVA: 'NVA' };
@@ -49,6 +51,156 @@ export function CpmBadge({ node, nearHrs }: { node?: CpmNode; nearHrs: number })
   return <Pill tone="outline" title={`Float ${fmt(node.float, 1)} elapsed h`}>Float {fmt(node.float, 0)} h</Pill>;
 }
 
+// ---------------------------------------------------------------- Operation Maturation Drawer
+interface OpDrawerProps {
+  row: BopRow;
+  topId: string;
+  childId: string | null;
+  onEdit: (fn: (r: Draft<BopRow>) => void) => void;
+  onClose: () => void;
+  zoneOpts: { value: string; label: string; group?: string }[];
+  cmpOpts: TagOption[];
+  resOpts: Record<ResourceField, TagOption[]>;
+  onCreateRes: (kind: ResourceKind) => (name: string) => string | null;
+  onCreateCmp: (name: string) => string | null;
+}
+function OperationDrawer({ row: r, onEdit, onClose, zoneOpts, cmpOpts, resOpts, onCreateRes, onCreateCmp }: OpDrawerProps) {
+  const { ws } = useStore();
+  const linkedPfmea = ws.pfmea.filter((p) => p.opId === r.opId);
+  const fpd = ws.fpds.find((f) => f.fpdId === r.fpdId);
+
+  return (
+    <Drawer
+      title="Edit Full Operation & Method"
+      subtitle={`${r.opId}${fpd ? ` · ${fpd.fpdCode}` : ''}`}
+      onClose={onClose}
+      width={640}
+      footer={<button className="btn-primary" onClick={onClose}>Done</button>}
+    >
+      <div className="space-y-5">
+        {/* Operation Phase Title */}
+        <section>
+          <label className="lbl mb-1 block">Operation Phase Title</label>
+          <ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Operation Phase Title" context={r.opId} placeholder="Describe the activity…" minWidth={560} />
+        </section>
+
+        {/* Detailed Method & Work Instruction Steps */}
+        <section>
+          <label className="lbl mb-1 flex items-center gap-1.5">
+            Detailed Method &amp; Work Instruction Steps
+            {r.methodDetail && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-[1px] text-[10px] font-medium text-emerald-800">📄 Populated</span>}
+          </label>
+          <ExpandableTextCell value={r.methodDetail ?? ''} onChange={(v) => onEdit((d) => { d.methodDetail = v || undefined; })} label="Detailed Method & Work Instruction Steps" context={r.opId} placeholder="Step-by-step work instructions, tolerances and safety precautions…" minWidth={560} />
+        </section>
+
+        {/* Engineering Rationale */}
+        <section>
+          <label className="lbl mb-1 block">Engineering Rationale</label>
+          <ExpandableTextCell value={r.rationale ?? ''} onChange={(v) => onEdit((d) => { d.rationale = v || undefined; })} label="Engineering Rationale" context={r.opId} placeholder="Why this operation is required, design intent…" minWidth={560} />
+        </section>
+
+        {/* Consumables */}
+        <section>
+          <label className="lbl mb-1 block">Consumables</label>
+          <textarea
+            rows={2}
+            value={r.consumables ?? ''}
+            onChange={(e) => onEdit((d) => { d.consumables = e.target.value || undefined; })}
+            className="inp block w-full resize-none"
+            placeholder="Consumables used in this operation (e.g. M10 bolts × 24, Loctite 243)…"
+          />
+        </section>
+
+        {/* Comments / Engineering Notes */}
+        <section>
+          <label className="lbl mb-1 block">Comments / Engineering Notes</label>
+          <ExpandableTextCell value={r.notes} onChange={(v) => onEdit((d) => { d.notes = v; })} label="Engineering Notes" context={r.opId} placeholder="Notes, assumptions, issues…" minWidth={560} />
+        </section>
+
+        <hr className="border-slate-200" />
+
+        {/* Three-Way Time Split */}
+        <section>
+          <div className="lbl mb-2">Three-Way Time Split</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Crew Size</span>
+              <NumInput value={r.crewSize} min={1} max={99} ariaLabel="Crew size" onChange={(v) => onEdit((d) => { d.crewSize = Math.max(1, Math.round(v ?? 1)); })} />
+            </label>
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Bay Run Time (h)</span>
+              <NumInput value={r.runHrs} min={0} ariaLabel="Run time hours" onChange={(v) => onEdit((d) => { d.runHrs = v ?? 0; })} />
+            </label>
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Touch Time (h)</span>
+              <NumInput value={r.touchHrs} min={0} ariaLabel="Touch time hours" onChange={(v) => onEdit((d) => { d.touchHrs = v ?? 0; })} />
+            </label>
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Manning Time (h)</span>
+              <NumInput value={r.manningHrs} min={0} ariaLabel="Manning time hours" onChange={(v) => onEdit((d) => { d.manningHrs = v ?? 0; })} />
+            </label>
+          </div>
+        </section>
+
+        {/* Zone / Floor */}
+        <section>
+          <div className="lbl mb-2">Zone &amp; Floor Level</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Origin Zone</span>
+              <Select value={r.originZoneId} options={zoneOpts} ariaLabel="Origin zone" onChange={(v) => onEdit((d) => { d.originZoneId = v; })} />
+            </label>
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Destination Zone</span>
+              <Select value={r.destZoneId} options={zoneOpts} ariaLabel="Destination zone" onChange={(v) => onEdit((d) => { if (d.originZoneId === d.destZoneId || !d.originZoneId) d.originZoneId = v; d.destZoneId = v; })} />
+            </label>
+            <label className="block">
+              <span className="lbl mb-0.5 block text-[11px]">Stand Floor Level</span>
+              <Select value={r.floorLevel} options={FLOOR_LEVELS.map((l, i) => ({ value: i, label: l }))} ariaLabel="Stand floor level" onChange={(v) => onEdit((d) => { d.floorLevel = v; })} />
+            </label>
+          </div>
+        </section>
+
+        {/* Equipment Tags */}
+        <section>
+          <div className="lbl mb-2">Equipment Tags</div>
+          <div className="space-y-2">
+            {RESOURCE_KINDS.map((k) => (
+              <div key={k.kind} className="flex items-start gap-2">
+                <span className="mt-1 w-36 shrink-0 text-[11.5px] text-slate-600">{k.plural}</span>
+                <TagPicker label={k.plural} value={r[k.field]} options={resOpts[k.field]} onChange={(v) => onEdit((d) => { d[k.field] = v; })} onCreate={onCreateRes(k.kind)} minWidth={350} />
+              </div>
+            ))}
+            <div className="flex items-start gap-2">
+              <span className="mt-1 w-36 shrink-0 text-[11.5px] text-slate-600">Components</span>
+              <TagPicker label="Components" value={r.componentIds} options={cmpOpts} onChange={(v) => onEdit((d) => { d.componentIds = v; })} onCreate={onCreateCmp} minWidth={350} />
+            </div>
+          </div>
+        </section>
+
+        {/* Linked PFMEA */}
+        {linkedPfmea.length > 0 && (
+          <section>
+            <div className="lbl mb-2">Linked PFMEA Failure Modes ({linkedPfmea.length})</div>
+            <div className="space-y-1.5">
+              {linkedPfmea.map((p) => (
+                <div key={p.id} className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px]">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-800">{p.failureMode}</span>
+                    <span className="text-[11px] text-slate-500">S{p.s} × O{p.o} × D{p.d} = RPN {p.s * p.o * p.d}</span>
+                    <span className={`ml-auto text-[11px] font-semibold ${p.status === 'Closed' ? 'text-green-700' : p.status === 'In Progress' ? 'text-amber-700' : 'text-red-700'}`}>{p.status}</span>
+                  </div>
+                  {p.effect && <div className="mt-0.5 text-slate-600">Effect: {p.effect}</div>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
 export default function Tab2Bop() {
   const { ws, mutate, model: m, toast } = useStore();
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -56,11 +208,15 @@ export default function Tab2Bop() {
   const [q, setQ] = useState('');
   const [cls, setCls] = useState<'' | Classification>('');
   const [only, setOnly] = useState<'' | 'lift' | 'critical' | 'ar' | 'block'>('');
+  // Drawer state: { topId, childId | null }
+  const [drawer, setDrawer] = useState<{ topId: string; childId: string | null } | null>(null);
   // Bulk edit state
   const [bulkZone, setBulkZone] = useState('');
   const [bulkFloor, setBulkFloor] = useState('');
   const [bulkClass, setBulkClass] = useState<'' | Classification>('');
   const [bulkCrew, setBulkCrew] = useState<number | null>(null);
+  const [bulkRigIds, setBulkRigIds] = useState<string[]>([]);
+  const [bulkBaselineHrs, setBulkBaselineHrs] = useState<number | null>(null);
 
   const known = useMemo(() => opIndex(ws.rows), [ws.rows]);
   const zoneOpts = useMemo(() => [{ value: '', label: '—' }, ...ws.zones.map((z) => { const c = ws.cells.find((x) => x.id === z.cellId); return { value: z.id, label: z.name, group: c ? `Cell ${c.number} · ${c.name}` : 'No cell' }; })], [ws.zones, ws.cells]);
@@ -72,6 +228,18 @@ export default function Tab2Bop() {
       out[k.field] = ws.resources.filter((r) => r.kind === k.kind).map((r) => ({ id: r.id, label: r.name || '(unnamed)', sub: [r.qty > 1 ? `×${r.qty}` : '', r.swlKg != null ? `${fmtInt(r.swlKg)} kg` : '', complexityOf(r), r.dwellMode === 'Full-Build' ? 'Full-Build Dwell' : ''].filter(Boolean).join(' · ') }));
     return out;
   }, [ws.resources]);
+
+  // Inline create callbacks for TagPicker + OperationDrawer
+  const createRes = (kind: ResourceKind) => (name: string): string | null => {
+    const r = { ...blankResource(kind, uid('res')), name };
+    mutate((d) => { d.resources.push(r); });
+    return r.id;
+  };
+  const createCmp = (name: string): string | null => {
+    const m = { id: uid('cmp'), bomRef: name, name, weightKg: null, lengthM: null, widthM: null, heightM: null, qtyPerBuild: 1, notes: '' };
+    mutate((d) => { d.components.push(m); });
+    return m.id;
+  };
 
   const edit = (topId: string, childId: string | null, fn: (r: Draft<BopRow>) => void) =>
     mutate((d) => {
@@ -152,18 +320,20 @@ export default function Tab2Bop() {
     setSel(new Set());
   };
 
-  const resetBulk = () => { setBulkZone(''); setBulkFloor(''); setBulkClass(''); setBulkCrew(null); };
+  const resetBulk = () => { setBulkZone(''); setBulkFloor(''); setBulkClass(''); setBulkCrew(null); setBulkRigIds([]); setBulkBaselineHrs(null); };
   const applyBulkEdit = () => {
     if (!sel.size) return;
     const ids = [...sel];
     mutate((d) => {
       for (const id of ids) {
         const r = d.rows.find((x) => x.id === id);
-        if (!r || r.children?.length) continue; // skip blocks
+        if (!r || r.children?.length) continue;
         if (bulkZone) r.destZoneId = bulkZone;
         if (bulkFloor !== '') r.floorLevel = Number(bulkFloor);
         if (bulkClass) r.classification = bulkClass;
         if (bulkCrew != null) r.crewSize = Math.max(1, Math.round(bulkCrew));
+        if (bulkRigIds.length > 0) r.rigIds = [...new Set([...r.rigIds, ...bulkRigIds])];
+        if (bulkBaselineHrs != null) r.baselineHrs = bulkBaselineHrs;
       }
     });
     toast('ok', `Batch update applied to ${ids.length} row(s).`);
@@ -188,6 +358,15 @@ export default function Tab2Bop() {
   const manualOps = [...m.calcs.values()].flatMap((c) => c.leaves).filter((l) => l.arPct == null).length;
   const totalClass = { VA: t.va, NNVA: t.nnva, NVA: t.nva };
 
+  // Find the row for the open drawer (look in both top-level rows and their children).
+  const drawerRow = drawer
+    ? (() => {
+        const top = ws.rows.find((r) => r.id === drawer.topId);
+        if (!top) return null;
+        return drawer.childId ? top.children?.find((c) => c.id === drawer.childId) ?? null : top;
+      })()
+    : null;
+
   return (
     <div>
       <HowItWorks
@@ -197,9 +376,9 @@ export default function Tab2Bop() {
           'One row per Baseline activity, grouped by FPD. Use the Spine Filter above to isolate an FPD, a cell or the whole factory.',
           'Enter the three-way time split per build: Bay Run Time, Operator Touch Time and Operator Manning Time. Leave Bay Run Time at 0 for hand work — the row then reads "Manual op" rather than an Attendance Ratio.',
           'Sequential rows follow the row above in the same FPD unless you enter Predecessor # values; Parallel rows start when their listed predecessors finish.',
-          'Tag every rig, crane, rigging item, vehicle and stand the activity needs — the five pickers take any number of items each.',
+          'Tag every rig, crane, rigging item, vehicle and stand the activity needs — the five pickers take any number of items each. Type a new name and click + Create to add items inline.',
           'Tick two or more rows in one FPD and click Merge Selected into Baseline Work Block to roll them up. Expand ▸ to edit the folded activities; Unmerge restores them exactly.',
-          'Any row with a Lift Count enters the Lift Register in Tab 4. Open the Multi-FPD Registry above the table to add, clone or deactivate FPDs.',
+          'Click the ✎ Edit button on any row to open the full Operation & Method drawer — add detailed work instructions, rationale, consumables and review linked PFMEA.',
         ]}
       />
 
@@ -240,7 +419,11 @@ export default function Tab2Bop() {
             <div className="w-40"><Select value={bulkClass} onChange={(v) => setBulkClass(v as '' | Classification)} options={[{ value: '', label: 'No change' }, ...CLASSIFICATIONS.map((c) => ({ value: c.value, label: CLASS_LONG[c.value] }))]} ariaLabel="Batch classification" /></div>
             <span className="text-[12px] text-slate-600">Crew</span>
             <NumInput value={bulkCrew} nullable min={1} onChange={setBulkCrew} width={52} ariaLabel="Batch crew size" />
-            <button className="btn-primary" onClick={applyBulkEdit} disabled={!bulkZone && bulkFloor === '' && !bulkClass && bulkCrew == null}>Apply</button>
+            <span className="text-[12px] text-slate-600">Add Tooling</span>
+            <TagPicker label="Tooling & Equipment" value={bulkRigIds} options={resOpts.rigIds} onChange={setBulkRigIds} minWidth={130} placeholder="Add tags…" />
+            <span className="text-[12px] text-slate-600">Baseline h</span>
+            <NumInput value={bulkBaselineHrs} nullable min={0} onChange={setBulkBaselineHrs} width={64} ariaLabel="Batch baseline hours" />
+            <button className="btn-primary" onClick={applyBulkEdit} disabled={!bulkZone && bulkFloor === '' && !bulkClass && bulkCrew == null && !bulkRigIds.length && bulkBaselineHrs == null}>Apply</button>
             <button className="btn-ghost" onClick={resetBulk}>Reset</button>
           </div>
         )}
@@ -320,19 +503,23 @@ export default function Tab2Bop() {
                               onToggleOpen={() => setOpen((o) => { const n = new Set(o); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })}
                               onSelect={() => setSel((s) => { const n = new Set(s); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })}
                               onEdit={(fn) => edit(r.id, null, fn)} zoneOpts={zoneOpts} fpdOpts={fpdOpts} cmpOpts={cmpOpts} resOpts={resOpts}
+                              onCreateRes={createRes} onCreateCmp={createCmp}
+                              onOpenDrawer={() => setDrawer({ topId: r.id, childId: null })}
                               actions={{ up: () => move(r.id, -1), down: () => move(r.id, 1), add: () => addRow(r.fpdId, r.id), dup: () => duplicate(r.id), del: () => removeRows([r.id]) }}
                             />
                             {block && isOpen && calc.leaves.map((lc) => (
                               <BopLine
                                 key={lc.leaf.id} row={lc.leaf} leaf={lc} child block={false} isOpen={false} selected={false} known={known}
                                 onEdit={(fn) => edit(r.id, lc.leaf.id, fn)} zoneOpts={zoneOpts} fpdOpts={fpdOpts} cmpOpts={cmpOpts} resOpts={resOpts}
+                                onCreateRes={createRes} onCreateCmp={createCmp}
+                                onOpenDrawer={() => setDrawer({ topId: r.id, childId: lc.leaf.id })}
                               />
                             ))}
                           </Fragment>
                         );
                       })}
                       {shown.length === 0 && (
-                        <tr><td colSpan={31} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : <span>No activities yet. Use <b>+ Add activity</b> to build manually, or <b>Import Excel</b> (Master BOP &amp; PFMEA Combined sheet) to load in bulk. Column mapping: Phase = FPD, Route Code = Op, Labour Content = Manning, Crew Density = Crew, Zone = Destination Zone.</span>}</td></tr>
+                        <tr><td colSpan={33} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : <span>No activities yet. Use <b>+ Add activity</b> to build manually, or <b>Import Excel / CSV</b> (Master BOP &amp; PFMEA Combined sheet) to load in bulk. Column mapping: Phase = FPD, Route Code = Op, Labour Content = Manning, Crew Density = Crew, Zone = Destination Zone.</span>}</td></tr>
                       )}
                     </Fragment>
                   );
@@ -348,6 +535,21 @@ export default function Tab2Bop() {
           <span>Hours are per build at baseline; Burden, Elapsed and labour totals apply Build #{ws.settings.learning.selectedBuild} learning ({fmtPct(m.lc * 100, 0)}).</span>
         </div>
       </div>
+
+      {drawer && drawerRow && (
+        <OperationDrawer
+          row={drawerRow}
+          topId={drawer.topId}
+          childId={drawer.childId}
+          onEdit={(fn) => edit(drawer.topId, drawer.childId, fn)}
+          onClose={() => setDrawer(null)}
+          zoneOpts={zoneOpts}
+          cmpOpts={cmpOpts}
+          resOpts={resOpts}
+          onCreateRes={createRes}
+          onCreateCmp={createCmp}
+        />
+      )}
     </div>
   );
 }
@@ -369,13 +571,16 @@ interface LineProps {
   fpdOpts: { value: string; label: string }[];
   cmpOpts: TagOption[];
   resOpts: Record<ResourceField, TagOption[]>;
+  onCreateRes: (kind: ResourceKind) => (name: string) => string | null;
+  onCreateCmp: (name: string) => string | null;
+  onOpenDrawer: () => void;
   actions?: { up: () => void; down: () => void; add: () => void; dup: () => void; del: () => void };
 }
 
-function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, known, onToggleOpen, onSelect, onEdit, zoneOpts, fpdOpts, cmpOpts, resOpts, actions }: LineProps) {
+function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, known, onToggleOpen, onSelect, onEdit, zoneOpts, fpdOpts, cmpOpts, resOpts, onCreateRes, onCreateCmp, onOpenDrawer, actions }: LineProps) {
   const { ws } = useStore();
   const t = ws.settings.thresholds;
-  const ro = block; // Baseline Work Block headers are derived from their activities
+  const ro = block;
   const bg = child ? 'bg-slate-50' : selected ? 'bg-sky-50' : 'bg-white';
   const burden = leaf ? leaf.burdenRaw : calc!.burdenRaw;
   const elapsed = leaf ? leaf.elapsedHrs : calc!.elapsedHrs;
@@ -387,6 +592,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
   const badPreds = r.predecessors.filter((p) => p.trim() && !known.has(p.trim()));
   const touchBad = r.touchHrs > r.manningHrs + 1e-9;
   const num = (v: number, d = 1) => <span className="block px-1.5 py-1 text-right tabular-nums text-slate-700">{fmt(v, d)}</span>;
+  const hasMethod = !!(r.methodDetail?.trim());
 
   return (
     <tr className={`${bg} hover:bg-slate-50`}>
@@ -404,7 +610,8 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className={`td sticky left-[170px] z-20 border-r border-slate-200 ${bg}`} style={{ width: 300, minWidth: 300, maxWidth: 300 }}>
         <div className="flex items-start gap-1">
           {block && <span className="mt-1 shrink-0"><Pill tone="blue" title="Merged Baseline Work Block">⊞ {r.children!.length}</Pill></span>}
-          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Baseline Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : 250} /></div>
+          {hasMethod && !block && <span className="mt-1 shrink-0" title="Detailed method instructions have been populated"><Pill tone="outline">📄 Method</Pill></span>}
+          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Baseline Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : hasMethod ? 200 : 250} /></div>
         </div>
       </td>
       <td className="td" style={{ minWidth: 96 }}>
@@ -426,7 +633,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className="td" style={{ minWidth: 170 }}>{ro ? <RoText>{zoneOpts.find((z) => z.value === r.destZoneId)?.label}</RoText> : <Select cell value={r.destZoneId} options={zoneOpts} ariaLabel="Destination zone" onChange={(v) => onEdit((d) => { if (d.originZoneId === d.destZoneId || !d.originZoneId) d.originZoneId = v; d.destZoneId = v; })} />}</td>
       <td className="td"><span className="block px-1 py-1">{movement === '—' ? <span className="text-slate-400">—</span> : <Pill tone={movement === 'Inter-Cell' ? 'blue' : 'outline'}>{movement}</Pill>}</span></td>
       <td className="td" style={{ minWidth: 92 }}>{ro ? <RoText>{FLOOR_LEVELS[r.floorLevel]}</RoText> : <Select cell value={r.floorLevel} ariaLabel="Stand floor level" options={FLOOR_LEVELS.map((l, i) => ({ value: i, label: l }))} onChange={(v) => onEdit((d) => { d.floorLevel = v; })} />}</td>
-      <td className="td"><TagPicker label="Components" value={r.componentIds} options={cmpOpts} readOnly={ro} minWidth={190} onChange={(v) => onEdit((d) => { d.componentIds = v; })} /></td>
+      <td className="td"><TagPicker label="Components" value={r.componentIds} options={cmpOpts} readOnly={ro} minWidth={190} onChange={(v) => onEdit((d) => { d.componentIds = v; })} onCreate={ro ? undefined : onCreateCmp} /></td>
       <td className="td w-[52px]">{ro ? num(r.crewSize, 0) : <NumInput cell value={r.crewSize} min={1} max={99} ariaLabel="Crew size" onChange={(v) => onEdit((d) => { d.crewSize = Math.max(1, Math.round(v ?? 1)); })} />}</td>
       <td className="td w-[70px]">{ro ? num(r.runHrs) : <NumInput cell value={r.runHrs} min={0} ariaLabel="Run time hours" onChange={(v) => onEdit((d) => { d.runHrs = v ?? 0; })} />}</td>
       <td className="td w-[70px]">{ro ? num(r.touchHrs) : <NumInput cell value={r.touchHrs} min={0} ariaLabel="Touch time hours" className={touchBad ? '!border-red-400' : ''} onChange={(v) => onEdit((d) => { d.touchHrs = v ?? 0; })} />}</td>
@@ -442,7 +649,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       </td>
       <td className="td" style={{ minWidth: 128 }}>{ro ? <RoText>{r.actionType}</RoText> : <Select cell value={r.actionType} ariaLabel="Specific action type" options={ACTION_TYPES.map((a) => ({ value: a, label: a }))} onChange={(v) => onEdit((d) => { d.actionType = v; if (v === 'Lifting' && d.liftCount === 0) d.liftCount = 1; })} />}</td>
       {RESOURCE_KINDS.map((k) => (
-        <td key={k.kind} className="td"><TagPicker label={k.plural} value={r[k.field]} options={resOpts[k.field]} readOnly={ro} onChange={(v) => onEdit((d) => { d[k.field] = v; })} /></td>
+        <td key={k.kind} className="td"><TagPicker label={k.plural} value={r[k.field]} options={resOpts[k.field]} readOnly={ro} onChange={(v) => onEdit((d) => { d[k.field] = v; })} onCreate={ro ? undefined : onCreateRes(k.kind)} /></td>
       ))}
       <td className="td w-[54px]">{ro ? num(r.liftCount, 0) : <NumInput cell value={r.liftCount} min={0} ariaLabel="Lift count" onChange={(v) => onEdit((d) => { d.liftCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
       <td className="td w-[54px]">{ro ? num(r.moveCount, 0) : <NumInput cell value={r.moveCount} min={0} ariaLabel="Move count" onChange={(v) => onEdit((d) => { d.moveCount = Math.max(0, Math.round(v ?? 0)); })} />}</td>
@@ -452,15 +659,18 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
         {r.baselineHrs != null ? (() => { const v = r.baselineHrs - r.manningHrs; return <span className={v < -0.05 ? 'text-red-700 font-semibold' : v > 0.05 ? 'text-amber-700' : 'text-green-700'}>{v >= 0 ? '+' : ''}{fmt(v, 1)}</span>; })() : <span className="text-slate-400">—</span>}
       </td>
       <td className="td">
-        {actions && (
-          <span className="flex items-center whitespace-nowrap pt-0.5">
-            <button className="btn-ghost" title="Move up within FPD" onClick={actions.up}>▲</button>
-            <button className="btn-ghost" title="Move down within FPD" onClick={actions.down}>▼</button>
-            <button className="btn-ghost" title="Insert activity below" onClick={actions.add}>＋</button>
-            <button className="btn-ghost" title="Duplicate" onClick={actions.dup}>⧉</button>
-            <button className="btn-ghost" title="Delete row" onClick={actions.del}>✕</button>
-          </span>
-        )}
+        <span className="flex items-center whitespace-nowrap pt-0.5">
+          <button className="btn-ghost" title="Edit full operation & method" onClick={onOpenDrawer}>✎</button>
+          {actions && (
+            <>
+              <button className="btn-ghost" title="Move up within FPD" onClick={actions.up}>▲</button>
+              <button className="btn-ghost" title="Move down within FPD" onClick={actions.down}>▼</button>
+              <button className="btn-ghost" title="Insert activity below" onClick={actions.add}>＋</button>
+              <button className="btn-ghost" title="Duplicate" onClick={actions.dup}>⧉</button>
+              <button className="btn-ghost" title="Delete row" onClick={actions.del}>✕</button>
+            </>
+          )}
+        </span>
       </td>
     </tr>
   );

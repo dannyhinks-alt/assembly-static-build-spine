@@ -295,8 +295,8 @@ export function Field({ label, guide, unit, children, hint }: { label: string; g
 // ---------------------------------------------------------------- TagPicker (unlimited multi-item pills)
 export interface TagOption { id: string; label: string; sub?: string }
 export function TagPicker({
-  value, options, onChange, placeholder = 'Add…', label, minWidth = 150, tone = 'slate', readOnly = false,
-}: { value: string[]; options: TagOption[]; onChange: (v: string[]) => void; placeholder?: string; label: string; minWidth?: number; tone?: 'slate' | 'blue'; readOnly?: boolean }) {
+  value, options, onChange, placeholder = 'Add…', label, minWidth = 150, tone = 'slate', readOnly = false, onCreate,
+}: { value: string[]; options: TagOption[]; onChange: (v: string[]) => void; placeholder?: string; label: string; minWidth?: number; tone?: 'slate' | 'blue'; readOnly?: boolean; onCreate?: (name: string) => string | null }) {
   const [open, setOpen] = useState<{ left: number; top: number; width: number } | null>(null);
   const [q, setQ] = useState('');
   const anchor = useRef<HTMLDivElement>(null);
@@ -358,7 +358,20 @@ export function TagPicker({
               <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="inp" />
             </div>
             <div className="scroll-thin max-h-56 overflow-auto py-1">
-              {shown.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">No matches. Add items in the registry tabs.</div>}
+              {shown.length === 0 && !onCreate && <div className="px-3 py-2 text-xs text-slate-500">No matches. Add items in the registry tabs.</div>}
+              {q.trim() && onCreate && !options.some((o) => o.label.toLowerCase() === q.trim().toLowerCase()) && (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12.5px] text-sky-800 hover:bg-sky-50"
+                  onClick={() => {
+                    const newId = onCreate(q.trim());
+                    if (newId) { onChange([...value, newId]); setQ(''); }
+                  }}
+                >
+                  <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-sky-600 text-[10px] font-bold text-white">+</span>
+                  Create &ldquo;{q.trim()}&rdquo;
+                </button>
+              )}
               {shown.map((o) => {
                 const on = value.includes(o.id);
                 return (

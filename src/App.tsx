@@ -184,8 +184,8 @@ function TopBar() {
         <button className="btn-ghost" onClick={st.undo} disabled={!st.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶ Undo</button>
         <button className="btn-ghost" onClick={st.redo} disabled={!st.canRedo} title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
         <span className="mx-1 h-5 w-px bg-slate-200" />
-        <input ref={xlsxRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={(e) => { void onXlsx(e.target.files?.[0]); e.target.value = ''; }} />
-        <button className="btn" onClick={() => xlsxRef.current?.click()} disabled={busy}>{busy ? 'Reading…' : 'Import Excel (.xlsx)'}</button>
+        <input ref={xlsxRef} type="file" accept=".xlsx,.xlsm,.xls,.csv" className="hidden" onChange={(e) => { void onXlsx(e.target.files?.[0]); e.target.value = ''; }} />
+        <button className="btn" onClick={() => xlsxRef.current?.click()} disabled={busy}>{busy ? 'Reading…' : 'Import Excel / CSV'}</button>
         <input ref={jsonRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { void onJson(e.target.files?.[0]); e.target.value = ''; }} />
         <div className="inline-flex rounded shadow-sm">
           <button className="btn rounded-r-none shadow-none" onClick={() => jsonRef.current?.click()}>Import JSON</button>

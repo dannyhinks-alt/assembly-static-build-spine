@@ -171,6 +171,12 @@ export interface BopRow {
   liftCount: number;
   moveCount: number;
   notes: string;
+  /** Step-by-step work instruction detail — multi-line, populated during method maturation. */
+  methodDetail?: string;
+  /** Engineering rationale for this operation — maps to/from the Rationale column. */
+  rationale?: string;
+  /** Consumables used in this operation — maps to/from the Consumables column. */
+  consumables?: string;
   /** Present when this row is a merged Baseline Work Block. Children keep full detail. */
   children?: BopRow[];
 }
