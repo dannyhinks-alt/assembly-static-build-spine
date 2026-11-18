@@ -238,4 +238,46 @@ fixture version.
 
 ---
 
+## Human-Legibility & Lifecycle Maintainability Standard
+
+These six rules exist so that a software engineer who did not write any of this
+code can read, configure, debug, and hand it on to a successor without needing
+help from the original authors.
+
+### R1 · Module granularity is the first gate
+
+Before adding to any file, check its line count. If adding the new code would
+push it past 250 lines, extract first. The extraction is not optional.
+
+### R2 · Every sub-module has a single, nameable responsibility
+
+Name the responsibility in one sentence before you write the first line. If you
+cannot name it, the boundary is wrong. A file called `utils.ts` is a symptom of
+a missing responsibility.
+
+### R3 · Every JSDoc must include downstream impact
+
+A formula without a downstream impact statement teaches nothing. Future
+engineers need to know what breaks if they alter the formula. Include it.
+
+### R4 · Tab and component files must stay thin
+
+If a tab file contains an `if` statement that performs domain arithmetic, that
+logic belongs in `src/engine/` or `src/lib/`. Move it before you commit.
+
+### R5 · State mutation is a one-way door
+
+The only path to a workspace mutation is `mutate()` from `useStore`. If you
+find code that bypasses this, treat it as a bug.
+
+### R6 · The offline constraint is not negotiable
+
+The offline single-file build must work on an air-gapped corporate laptop. Any
+`import` that resolves to an external host at runtime breaks this constraint.
+If you are unsure whether a dependency resolves externally, run
+`npm run build:offline` and inspect the output for external `src=` or `href=`
+attributes.
+
+---
+
 *Last updated: 2026-11-18. Keep this file in sync with the codebase.*
