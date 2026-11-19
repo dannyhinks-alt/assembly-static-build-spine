@@ -3,7 +3,7 @@ import { blankResource } from '../data/seed';
 import type { Component, Fpd, PfmeaItem, ResourceKind, Workspace } from '../types';
 import { RESOURCE_KINDS, uid } from '../types';
 import { num } from './format';
-import { type Row, type ExcelImportResult, type ParsedWorkbook, col, list, nOrNull, str, sheetToRows } from './excelHelpers';
+import { type Row, type ExcelImportResult, type ParsedWorkbook, col, list, nOrNull, str, sheetToRows, scoreBopCandidate, BOP_CONTENT_SIGNALS } from './excelHelpers';
 import { processBopSheet } from './excelBopImport';
 
 /**
@@ -65,9 +65,22 @@ function processResourceRows(
   }
 }
 
+/** SHEET_KINDS regex table used inside parseWorkbook. */
+const SHEET_KINDS: [RegExp, string][] = [
+  [/pfmea|fmea|risk/i, 'pfmea'], [/fpd|document|registry/i, 'fpds'],
+  [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],
+  [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],
+  [/component|bom|part/i, 'components'], [/resource|equipment|crane|tool/i, 'resources'],
+];
+
 /**
  * Purpose: Parse a File (.xlsx / .xlsm / .xls / .csv) into a ParsedWorkbook for buildImport.
- *   SheetJS is loaded on demand — never from a CDN.
+ *   Scores every worksheet as a BOP candidate and selects the highest-scoring sheet so
+ *   generic tab names (Sheet1, Sheet2) are handled correctly.  SheetJS is loaded on
+ *   demand — never from a CDN.
+ *
+ * Formula: for BOP candidates, score = headerMatches × 100 + min(dataRows, 100);
+ *   the highest-scoring candidate wins.
  *
  * Downstream impact: provides sheet data to buildImport, which populates the workspace.
  */
@@ -76,13 +89,7 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
   const sheets: Record<string, Row[]> = {};
   const errorCells: string[] = [];
-  const SHEET_KINDS: [RegExp, string][] = [
-    [/pfmea|fmea|risk/i, 'pfmea'], [/fpd|document|registry/i, 'fpds'],
-    [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],
-    [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],
-    [/component|bom|part/i, 'components'], [/resource|equipment|crane|tool/i, 'resources'],
-  ];
-  const BOP_SIGNALS = ['phase #', 'route code', 'operation phase title', 'op #', 'fpd code'];
+  const bopCandidates: { name: string; score: number; rows: Row[] }[] = [];
   for (const name of wb.SheetNames) {
     const sh = wb.Sheets[name];
     for (const addr of Object.keys(sh)) {
@@ -90,15 +97,23 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
       const c = sh[addr] as { t?: string; w?: string; v?: unknown };
       if (c.t === 'e' || (typeof c.v === 'string' && /^#(REF|N\/A|VALUE|DIV\/0|NAME|NULL|NUM)[!?]?/.test(c.v))) { errorCells.push(`${name}!${addr} (${c.w ?? c.v})`); delete sh[addr]; }
     }
+    const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
     let kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
     if (!kind) {
-      const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
       for (let i = 0; i < Math.min(15, aoa.length); i++) {
         const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase()).join(' ');
-        if (BOP_SIGNALS.some((s) => rowStr.includes(s))) { kind = 'bop'; break; }
+        if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) { kind = 'bop'; break; }
       }
     }
-    if (kind && !sheets[kind]) sheets[kind] = sheetToRows(XLSX, sh);
+    if (kind === 'bop') {
+      bopCandidates.push({ name, score: scoreBopCandidate(aoa), rows: sheetToRows(XLSX, sh) });
+    } else if (kind && !sheets[kind]) {
+      sheets[kind] = sheetToRows(XLSX, sh);
+    }
+  }
+  if (bopCandidates.length) {
+    bopCandidates.sort((a, b) => b.score - a.score);
+    sheets['bop'] = bopCandidates[0].rows;
   }
   return { fileName: file.name, sheets, errorCells };
 }
@@ -115,15 +130,17 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
   const ws: Workspace = structuredClone(current);
   const warnings: string[] = [];
   const counts: ExcelImportResult['counts'] = [];
+  let skippedRows = 0;
   const count = (label: string) => { const c = { label, added: 0, updated: 0 }; counts.push(c); return c; };
   if (parsed.errorCells.length) warnings.push(`${parsed.errorCells.length} Excel error cell(s) (#REF! etc.) were read as blank: ${parsed.errorCells.slice(0, 8).join(', ')}${parsed.errorCells.length > 8 ? ' …' : ''}`);
   const S = parsed.sheets;
   if (mode === 'replace') { if (S.bop) ws.rows = []; if (S.fpds) ws.fpds = []; if (S.components && !S.bop) ws.components = []; if (S.pfmea) ws.pfmea = []; }
   const cellByNumber = (v: unknown) => { const s = str(v); const n = parseInt(s.replace(/\D+/g, ''), 10); return ws.cells.find((c) => c.number === n || c.id === s || c.name.toLowerCase() === s.toLowerCase())?.id ?? ''; };
   const fpdByCode = (code: string) => ws.fpds.find((f) => f.fpdCode.toLowerCase() === code.toLowerCase());
-  const ensureFpd = (code: string): Fpd => {
+  const ensureFpd = (code: string, title?: string): Fpd => {
     let f = fpdByCode(code);
-    if (!f) { f = { fpdId: uid('fpd'), fpdCode: code, title: code, subAssemblyBomRef: '', assignedCellId: ws.cells[0]?.id ?? '', revision: 'A', active: true }; ws.fpds.push(f); }
+    if (!f) { f = { fpdId: uid('fpd'), fpdCode: code, title: title ?? code, subAssemblyBomRef: '', assignedCellId: ws.cells[0]?.id ?? '', revision: 'A', active: true }; ws.fpds.push(f); }
+    else if (title && f.title === f.fpdCode) f.title = title;
     return f;
   };
   if (S.fpds) {
@@ -156,7 +173,7 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
     return r;
   };
   if (S.resources) processResourceRows(S.resources, ws, warnings, ensureRes, cellByNumber, cRes);
-  if (S.bop) processBopSheet(S.bop, ws, warnings, counts, findCmp, ensureFpd, ensureRes, cellByNumber);
+  if (S.bop) skippedRows = processBopSheet(S.bop, ws, warnings, counts, findCmp, ensureFpd, ensureRes, cellByNumber);
   if (S.pfmea) {
     const c = count('PFMEA items');
     const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
@@ -169,7 +186,7 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
       Object.assign(p, { fpdId: code ? ensureFpd(code).fpdId : p.fpdId, effect: str(col(r, 'Effect', 'Potential Effect')) || p.effect, cause: str(col(r, 'Cause', 'Potential Cause')) || p.cause, controls: str(col(r, 'Controls', 'Current Controls')) || p.controls, s: sod(col(r, 'S', 'Severity')), o: sod(col(r, 'O', 'Occurrence')), d: sod(col(r, 'D', 'Detection')), recommendedAction: str(col(r, 'Recommended Action', 'Action')) || p.recommendedAction, owner: str(col(r, 'Owner')) || p.owner, status: /clos/i.test(st) ? 'Closed' : /progress/i.test(st) ? 'In Progress' : 'Open', controlDocRef: str(col(r, 'Control Doc Ref', 'Control Document', 'Control Plan Ref')) || p.controlDocRef, resourceIds: str(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling')) ? list(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling')).map((n) => ws.resources.find((x) => x.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => !!x) : p.resourceIds });
     }
   }
-  if (!Object.keys(S).length) warnings.push('No recognisable sheets found. Expected sheet names containing FPD, BOP, Component, Resource or PFMEA — download the template for the exact layout.');
+  if (!Object.keys(S).length) warnings.push('No recognisable BOP sheets found. Expected a sheet whose first rows contain "Route Code", "Operation Phase Title" and "Phase #" — download the template for the exact column layout.');
   ws.meta.updatedAt = new Date().toISOString();
-  return { ws, counts: counts.filter((c) => c.added + c.updated > 0 || c.label !== 'Resources'), warnings, sheetsRead: Object.keys(S) };
+  return { ws, counts: counts.filter((c) => c.added + c.updated > 0 || c.label !== 'Resources'), warnings, sheetsRead: Object.keys(S), skippedRows };
 }

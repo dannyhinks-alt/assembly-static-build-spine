@@ -3,7 +3,7 @@ import { blankRow } from '../data/seed';
 import type { ActionType, BopRow, Classification, Component, Fpd, PfmeaItem, ResourceKind, Workspace } from '../types';
 import { ACTION_TYPES, FLOOR_LEVELS, uid } from '../types';
 import { leavesOf } from '../engine/model';
-import { type Row, col, list, noneOrEmpty, str, key } from './excelHelpers';
+import { type Row, col, list, noneOrEmpty, str, key, isSentinel, sentinelFree, isHeaderOrHelperRow, normaliseFpdCode } from './excelHelpers';
 import type { ExcelImportResult } from './excelHelpers';
 import { num } from './format';
 
@@ -12,6 +12,7 @@ type CountEntry = ExcelImportResult['counts'][number];
 /**
  * Purpose: First-pass scan of BOP rows to detect duplicate Route Codes shared across multiple phases.
  *   When found, builds a rewrite map so each route code is prefixed with its phase identifier.
+ *   Header and helper rows are skipped so their field labels never pollute the detection.
  *
  * Formula: for each rawOp, track the Set of phases that use it; if any Set has >1 member,
  *   needsPrefix = true and each (phase, rawOp) pair gets a unique prefixed id.
@@ -25,6 +26,7 @@ export function detectDuplicateRouteCodes(bopRows: Row[]): {
 } {
   const routePhases = new Map<string, Set<string>>();
   for (const r of bopRows) {
+    if (isHeaderOrHelperRow(r)) continue;
     const rawOp = str(col(r, 'Route Code', 'Op #', 'Route Code / Op #', 'Op ID', 'Operation'));
     const rawPhase = str(col(r, 'Phase #', 'FPD Code', 'FPD', 'FPD Ref', 'Phase'));
     if (!rawOp || !rawPhase) continue;
@@ -36,6 +38,7 @@ export function detectDuplicateRouteCodes(bopRows: Row[]): {
   if (!needsPrefix) return { needsPrefix, opRewriteMap, warningMessage: null };
   const usedIds = new Set<string>();
   for (const r of bopRows) {
+    if (isHeaderOrHelperRow(r)) continue;
     const rawOp = str(col(r, 'Route Code', 'Op #', 'Route Code / Op #', 'Op ID', 'Operation'));
     const rawPhase = str(col(r, 'Phase #', 'FPD Code', 'FPD', 'FPD Ref', 'Phase'));
     if (!rawOp || !rawPhase || (routePhases.get(rawOp)?.size ?? 0) <= 1) continue;
@@ -62,14 +65,19 @@ function resolvePredId(pred: string, currentPhase: string, needsPrefix: boolean,
   return pred;
 }
 
-/** Inline PFMEA entry creation when a Failure Mode column is populated on a BOP row. */
+/**
+ * Purpose: Creates an inline PFMEA item when a BOP row has a Failure Mode column populated.
+ *   Sentinel values (None, N/A, —) are treated as absent — no bogus PFMEA item is created.
+ *
+ * Downstream impact: populates ws.pfmea; Tab 5 PFMEA register counts.
+ */
 function processInlinePfmea(
   r: Row, op: string, fpd: Fpd, ws: Workspace,
   cPfmea: CountEntry,
   _ensureRes: (kind: ResourceKind, name: string, viaBop?: boolean) => { id: string },
 ): void {
   const fmRaw = str(col(r, 'Failure Mode'));
-  if (!fmRaw) return;
+  if (!fmRaw || isSentinel(fmRaw)) return;
   const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
   let p: PfmeaItem | undefined = ws.pfmea.find((x) => x.opId === op && x.failureMode.toLowerCase() === fmRaw.toLowerCase());
   if (!p) {
@@ -77,10 +85,10 @@ function processInlinePfmea(
     ws.pfmea.push(p); cPfmea.added++;
   } else cPfmea.updated++;
   p.fpdId = fpd.fpdId;
-  const effect = str(col(r, 'Effect of Failure', 'Effect', 'Potential Effect')); if (effect) p.effect = effect;
-  const cause = str(col(r, 'Cause of Failure', 'Cause', 'Potential Cause')); if (cause) p.cause = cause;
-  const controls = str(col(r, 'Current Process Controls', 'Controls', 'Process Controls')); if (controls) p.controls = controls;
-  const action = str(col(r, 'Recommended Corrective Action', 'Recommended Action')); if (action) p.recommendedAction = action;
+  const effect = str(col(r, 'Effect of Failure', 'Effect', 'Potential Effect')); if (effect && !isSentinel(effect)) p.effect = effect;
+  const cause = str(col(r, 'Cause of Failure', 'Cause', 'Potential Cause')); if (cause && !isSentinel(cause)) p.cause = cause;
+  const controls = str(col(r, 'Current Process Controls', 'Controls', 'Process Controls')); if (controls && !isSentinel(controls)) p.controls = controls;
+  const action = str(col(r, 'Recommended Corrective Action', 'Recommended Action')); if (action && !isSentinel(action)) p.recommendedAction = action;
   if (str(col(r, 'Severity (1-10)', 'Severity', 'S'))) p.s = sod(col(r, 'Severity (1-10)', 'Severity', 'S'));
   if (str(col(r, 'Occurrence (1-10)', 'Occurrence', 'O'))) p.o = sod(col(r, 'Occurrence (1-10)', 'Occurrence', 'O'));
   if (str(col(r, 'Detection (1-10)', 'Detection', 'D'))) p.d = sod(col(r, 'Detection (1-10)', 'Detection', 'D'));
@@ -91,13 +99,14 @@ function processInlinePfmea(
 }
 
 type EnsureRes = (kind: ResourceKind, name: string, viaBop?: boolean) => { id: string };
-type EnsureFpd = (code: string) => Fpd;
+type EnsureFpd = (code: string, title?: string) => Fpd;
 type FindCmp = (ref: string) => Component | undefined;
 
 /**
  * Purpose: Processes a single BOP spreadsheet row into a BopRow on the workspace.
  *   Creates or updates the row, resolves zone / resource / component references, and
  *   triggers inline PFMEA entry creation when a Failure Mode is populated.
+ *   Sentinel values on text fields (consumables, rationale, notes) are stored as empty string.
  *
  * Downstream impact: populates ws.rows, ws.zones, ws.components, ws.pfmea and ws.holdPoints;
  *   directly determines what Tab 2 (BOP), Tab 5 (PFMEA) and Tab 6 (Labour) display.
@@ -117,7 +126,7 @@ function processBopRow(
   const tags = (kind: ResourceKind, v: unknown) => list(v).map((n) => ensureRes(kind, n, true).id);
   const rPred = (pred: string) => resolvePredId(pred, code, needsPrefix, opRewriteMap);
   const zoneOf = (v: unknown): string => {
-    const s = str(v); if (!s || s.toLowerCase() === 'none') return '';
+    const s = str(v); if (!s || isSentinel(s)) return '';
     const z = ws.zones.find((x) => x.name.toLowerCase() === s.toLowerCase() || x.id.toLowerCase() === s.toLowerCase()) ?? ws.zones.find((x) => x.name.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(x.name.toLowerCase()));
     if (z) return z.id;
     const cell = cellByNumber(s); const first = ws.zones.find((x) => x.cellId === cell); if (first) return first.id;
@@ -155,24 +164,31 @@ function processBopRow(
   row.liftCount = Math.max(0, Math.round(num(col(r, 'Lifts', 'Lift Count')))); if (row.actionType === 'Lifting' && row.liftCount === 0) row.liftCount = 1;
   row.moveCount = Math.max(0, Math.round(num(col(r, 'Moves', 'Move Count'))));
   row.notes = str(col(r, 'Notes', 'Engineering Notes', 'Comments')) || row.notes;
-  const detailRaw = str(col(r, 'Detailed Method Steps', 'Detailed Method & Work Instruction Steps', 'Method Detail')); if (detailRaw) row.methodDetail = detailRaw;
-  const rationaleRaw = str(col(r, 'Rationale')); if (rationaleRaw) row.rationale = rationaleRaw;
-  const consumablesRaw = str(col(r, 'Consumables')); if (consumablesRaw) row.consumables = consumablesRaw;
-  const gateTitle = str(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
+  const detailRaw = sentinelFree(col(r, 'Detailed Method Steps', 'Detailed Method & Work Instruction Steps', 'Method Detail')); if (detailRaw) row.methodDetail = detailRaw;
+  const rationaleRaw = sentinelFree(col(r, 'Rationale')); if (rationaleRaw) row.rationale = rationaleRaw;
+  const consumablesRaw = sentinelFree(col(r, 'Consumables')); if (consumablesRaw) row.consumables = consumablesRaw;
+  const gateTitle = sentinelFree(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
   if (gateTitle) { const existing = ws.holdPoints.find((h) => h.opId === op && h.title.toLowerCase() === gateTitle.toLowerCase()); if (!existing) ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' }); }
   processInlinePfmea(r, op, fpd, ws, cPfmea, ensureRes);
 }
 
 /**
  * Purpose: Processes the BOP sheet from a parsed workbook, creating/updating all BOP rows.
+ *   Skips repeated header rows and helper/instruction rows mid-sheet.
+ *   Normalises bare phase numbers (4 → "FPD-004") via normaliseFpdCode.
+ *
+ * Formula: for each data row, skip if isHeaderOrHelperRow; derive FPD code with
+ *   normaliseFpdCode; call processBopRow for each valid row.
  *
  * Downstream impact: populates ws.rows, ws.zones, ws.pfmea and ws.holdPoints;
  *   determines Tab 2, Tab 5, Tab 6 state.
+ *
+ * @returns number of skipped header/helper rows
  */
 export function processBopSheet(
   bopRows: Row[], ws: Workspace, warnings: string[], counts: ExcelImportResult['counts'],
   findCmp: FindCmp, ensureFpd: EnsureFpd, ensureRes: EnsureRes, cellByNumber: (v: unknown) => string,
-): void {
+): number {
   if (ws.cells.length === 0) ws.cells.push({ id: uid('cell'), number: 1, name: 'Main Assembly', crewPerShift: 2, notes: '' });
   const c = { label: 'BOP activities', added: 0, updated: 0 }; counts.push(c);
   const cPfmea = { label: 'PFMEA items (via BOP)', added: 0, updated: 0 }; counts.push(cPfmea);
@@ -182,14 +198,17 @@ export function processBopSheet(
   const flat = new Map<string, BopRow>();
   for (const r of ws.rows) for (const l of leavesOf(r)) flat.set(l.opId.trim().toLowerCase(), l);
   const lastDestZone = new Map<string, string>();
+  let skippedRows = 0;
   for (const r of bopRows) {
+    if (isHeaderOrHelperRow(r)) { skippedRows++; continue; }
     const rawOp = str(col(r, 'Op #', 'Op', 'Route Code', 'Route Code / Op #', 'Op ID', 'Operation'));
-    const rawCode = str(col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase'));
+    const rawCodeCell = col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase');
+    const { code, title: fpdTitle } = normaliseFpdCode(rawCodeCell);
     if (noneOrEmpty(rawOp) && noneOrEmpty(str(col(r, 'Operation Phase Title', 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Activity')))) continue;
-    const op = resolveOpId(rawOp, rawCode, needsPrefix, opRewriteMap);
-    const code = rawCode;
+    const op = resolveOpId(rawOp, code, needsPrefix, opRewriteMap);
     if (!op || !code) { if (op || code) warnings.push(`BOP row skipped — needs both FPD Code and Op # (got "${code}" / "${op}").`); continue; }
-    const fpd = ensureFpd(code);
+    const fpd = ensureFpd(code, fpdTitle);
     processBopRow(r, op, code, fpd, ws, warnings, c, cPfmea, cCmp, flat, lastDestZone, needsPrefix, opRewriteMap, findCmp, ensureRes, cellByNumber);
   }
+  return skippedRows;
 }

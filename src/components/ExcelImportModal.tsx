@@ -38,6 +38,11 @@ export default function ExcelImportModal({ parsed, onClose }: Props) {
         ))}
       </div>
       <div className="mb-3 text-xs text-slate-500">Sheets recognised: {res.sheetsRead.length ? res.sheetsRead.join(', ') : 'none'}</div>
+      {res.skippedRows > 0 && (
+        <div className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          {res.skippedRows} repeated header / helper row{res.skippedRows !== 1 ? 's were' : ' was'} detected mid-sheet and skipped automatically.
+        </div>
+      )}
       <table className="mb-3 w-full">
         <thead><tr><th className="th">Table</th><th className="th text-right">Added</th><th className="th text-right">Updated</th></tr></thead>
         <tbody>
