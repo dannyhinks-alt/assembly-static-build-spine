@@ -203,3 +203,78 @@ describe('detectDuplicateRouteCodes', () => {
     expect(needsPrefix).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shared helper: wires up processBopSheet with minimal stubs
+// ---------------------------------------------------------------------------
+
+function runProcessBopSheet(rows: Record<string, unknown>[]): { ws: ReturnType<typeof seedWorkspace>; skipped: number; warnings: string[] } {
+  const ws = seedWorkspace();
+  if (ws.cells.length === 0) ws.cells.push({ id: 'cell-1', number: 1, name: 'Main Assembly', crewPerShift: 2, notes: '' });
+  const warnings: string[] = [];
+  const counts: { label: string; added: number; updated: number }[] = [];
+  const noOp = () => undefined;
+  const ensureFpd = (code: string, title?: string) => {
+    let f = ws.fpds.find((x) => x.fpdCode === code);
+    if (!f) { f = { fpdId: `fpd-${code}`, fpdCode: code, title: title ?? code, subAssemblyBomRef: '', assignedCellId: ws.cells[0]?.id ?? '', revision: 'A', active: true }; ws.fpds.push(f); }
+    else if (title && f.title === f.fpdCode) f.title = title;
+    return f;
+  };
+  const ensureRes = (_kind: string, name: string) => ({ id: `res-${name}` });
+  const skipped = processBopSheet(rows, ws, warnings, counts, noOp as never, ensureFpd, ensureRes as never, () => '');
+  return { ws, skipped, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// Layout A — 5-row matrix preamble (title banner, Present/Not Present, governance labels, headers, data)
+// ---------------------------------------------------------------------------
+
+describe('processBopSheet — Layout A (5-row matrix preamble)', () => {
+  it('skips the four preamble rows and imports only the data row', () => {
+    // Layout A structure (after sheetToRows has promoted the real header row):
+    //   Row 1: Title banner (non-header cells)
+    //   Row 2: Present / Not Present metadata
+    //   Row 3: FREE-TEXT / PRE-DEFINED / INTEGER FREE-TEXT / DEFINE IN TARGETS TAB governance
+    //   Row 4: Repeated column-header row
+    //   Row 5: Real data
+    const rows = [
+      { 'Phase #': 'Assembly BOP Template v2.1', 'Route Code': '', 'Operation Phase Title': '', 'Crew Density': '', 'Task Type': '', 'Zone': '' },
+      { 'Phase #': 'Present', 'Route Code': 'Present', 'Operation Phase Title': 'Present', 'Crew Density': 'Present', 'Task Type': 'Not Present', 'Zone': 'Present' },
+      { 'Phase #': 'PRE-DEFINED', 'Route Code': 'PRE-DEFINED', 'Operation Phase Title': 'FREE-TEXT', 'Crew Density': 'INTEGER FREE-TEXT', 'Task Type': 'PRE-DEFINED', 'Zone': 'DEFINE IN TARGETS TAB' },
+      { 'Phase #': 'Phase #', 'Route Code': 'Route Code', 'Operation Phase Title': 'Operation Phase Title', 'Crew Density': 'Crew Density', 'Task Type': 'Task Type', 'Zone': 'Zone' },
+      { 'Phase #': 'FPD-001', 'Route Code': '10', 'Operation Phase Title': 'Install Main Frame', 'Crew Density': 2, 'Task Type': 'Sequential', 'Zone': 'Zone A', 'Labour Content (Hours)': 1.5, 'Operation Action Category': 'VA' },
+    ];
+    const { ws, skipped } = runProcessBopSheet(rows);
+    // Rows 1–4 must be skipped (3 governance/helper rows + 1 repeated header)
+    expect(skipped).toBeGreaterThanOrEqual(3);
+    expect(ws.rows).toHaveLength(1);
+    expect(ws.rows[0].opId).toBe('10');
+    expect(ws.rows[0].description).toBe('Install Main Frame');
+    expect(ws.fpds.some((f) => f.fpdCode === 'FPD-001')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layout B — clean Row-1 export (re-loop from exportBop)
+// ---------------------------------------------------------------------------
+
+describe('processBopSheet — Layout B (clean Row-1 export)', () => {
+  it('imports all rows when there is no preamble and "Yes" gate creates a Hold Point', () => {
+    // Layout B: sheetToRows produces rows directly with no preamble rows present
+    const rows = [
+      { 'Phase #': 'FPD-002', 'Route Code': '20', 'Operation Phase Title': 'Fit Wing Spar', 'Crew Density': 1, 'Task Type': 'Sequential', 'Zone': 'Zone B', 'Labour Content (Hours)': 2.0, 'Operation Action Category': 'VA' },
+      { 'Phase #': 'FPD-002', 'Route Code': '30', 'Operation Phase Title': 'Torque Main Bolts', 'Crew Density': 2, 'Task Type': 'Sequential', 'Zone': 'Zone B', 'Labour Content (Hours)': 0.5, 'Operation Action Category': 'VA' },
+      { 'Phase #': 'FPD-002', 'Route Code': '40', 'Operation Phase Title': 'Inspect & Sign Off', 'Crew Density': 1, 'Task Type': 'Sequential', 'Zone': 'Zone B', 'Labour Content (Hours)': 0.25, 'Operation Action Category': 'VA', 'Quality Gate Sign-off': 'Yes' },
+    ];
+    const { ws, skipped } = runProcessBopSheet(rows);
+    expect(skipped).toBe(0);
+    expect(ws.rows).toHaveLength(3);
+    expect(ws.rows[0].opId).toBe('20');
+    expect(ws.rows[1].opId).toBe('30');
+    expect(ws.rows[2].opId).toBe('40');
+    // "Yes" Quality Gate Sign-off must create a Hold Point with canonical title
+    expect(ws.holdPoints).toHaveLength(1);
+    expect(ws.holdPoints[0].title).toBe('Hold Point');
+    expect(ws.holdPoints[0].opId).toBe('40');
+  });
+});

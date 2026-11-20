@@ -97,7 +97,7 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
       const c = sh[addr] as { t?: string; w?: string; v?: unknown };
       if (c.t === 'e' || (typeof c.v === 'string' && /^#(REF|N\/A|VALUE|DIV\/0|NAME|NULL|NUM)[!?]?/.test(c.v))) { errorCells.push(`${name}!${addr} (${c.w ?? c.v})`); delete sh[addr]; }
     }
-    const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
+    const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '', blankrows: false });
     let kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
     if (!kind) {
       for (let i = 0; i < Math.min(15, aoa.length); i++) {

@@ -120,7 +120,7 @@ function processBopRow(
   needsPrefix: boolean, opRewriteMap: Map<string, string>,
   findCmp: FindCmp, ensureRes: EnsureRes, cellByNumber: (v: unknown) => string,
 ): void {
-  const classOf = (v: unknown): Classification => { const s = str(v).toUpperCase(); return /NNVA|NECESSARY/.test(s) ? 'NNVA' : /NVA|WASTE/.test(s) ? 'NVA' : 'VA'; };
+  const classOf = (v: unknown): Classification => { const s = str(v).toUpperCase(); return /NNVA|NECESSARY|INCIDENTAL/.test(s) ? 'NNVA' : /NVA|WASTE/.test(s) ? 'NVA' : 'VA'; };
   const actionOf = (v: unknown): ActionType => { const s = key(str(v)); return ACTION_TYPES.find((a) => key(a) === s) ?? ACTION_TYPES.find((a) => s && key(a).startsWith(s.slice(0, 4))) ?? 'Fitting'; };
   const levelOf = (v: unknown) => { const s = str(v).toLowerCase(); const i = FLOOR_LEVELS.findIndex((l) => l.toLowerCase() === s); return i >= 0 ? i : Math.min(3, Math.max(0, parseInt(s.replace(/\D+/g, ''), 10) || 0)); };
   const tags = (kind: ResourceKind, v: unknown) => list(v).map((n) => ensureRes(kind, n, true).id);
@@ -145,7 +145,7 @@ function processBopRow(
   row.originZoneId = zoneOf(col(r, 'Origin Zone', 'Origin', 'Origin Cell / Zone')) || lastDestZone.get(fpd.fpdId) || row.destZoneId;
   if (row.destZoneId) lastDestZone.set(fpd.fpdId, row.destZoneId);
   row.floorLevel = levelOf(col(r, 'Floor Level', 'Stand Floor Level', 'Level'));
-  row.componentIds = list(col(r, 'Components', 'Component', 'Component Name / Description', 'Component Name/Description', 'BOM Refs')).map((ref) => {
+  row.componentIds = list(col(r, 'Components', 'Component', 'Component Name', 'Component Name / Description', 'Component Name/Description', 'BOM Refs')).map((ref) => {
     let m = findCmp(ref);
     if (!m) { m = { id: uid('cmp'), bomRef: ref, name: ref, weightKg: null, lengthM: null, widthM: null, heightM: null, qtyPerBuild: 1, notes: '' }; ws.components.push(m); cCmp.added++; warnings.push(`Component "${ref}" (op ${op}) was not in the registry — created with no weight. Complete it in Tab 3.`); }
     return m.id;
@@ -167,7 +167,8 @@ function processBopRow(
   const detailRaw = sentinelFree(col(r, 'Detailed Method Steps', 'Detailed Method & Work Instruction Steps', 'Method Detail')); if (detailRaw) row.methodDetail = detailRaw;
   const rationaleRaw = sentinelFree(col(r, 'Rationale')); if (rationaleRaw) row.rationale = rationaleRaw;
   const consumablesRaw = sentinelFree(col(r, 'Consumables')); if (consumablesRaw) row.consumables = consumablesRaw;
-  const gateTitle = sentinelFree(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
+  const rawGate = sentinelFree(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
+  const gateTitle = rawGate ? (/^(yes|true|hold)$/i.test(rawGate) ? 'Hold Point' : rawGate) : '';
   if (gateTitle) { const existing = ws.holdPoints.find((h) => h.opId === op && h.title.toLowerCase() === gateTitle.toLowerCase()); if (!existing) ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' }); }
   processInlinePfmea(r, op, fpd, ws, cPfmea, ensureRes);
 }

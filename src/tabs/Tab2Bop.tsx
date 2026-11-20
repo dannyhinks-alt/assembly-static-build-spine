@@ -1,6 +1,7 @@
 import type { Draft } from 'immer';
 import { Fragment, useMemo, useState } from 'react';
 import { Empty, ExpandableTextCell, HowItWorks, Kpi, NumInput, Pill, RagBadge, Select, TagPicker, TextInput, Th, Tip, type TagOption } from '../components/primitives';
+import HoverExpandTextBox from '../components/common/HoverExpandTextBox';
 import { OperationDrawer } from './OperationMethodDrawer';
 import { FpdRegistryCard } from '../components/FpdRegistry';
 import { blankAncillary, blankResource, blankRow } from '../data/seed';
@@ -461,8 +462,7 @@ function BopLine({ row: r, calc, leaf, node, block, child, isOpen, selected, kno
       <td className={`td sticky left-[170px] z-20 border-r border-slate-200 ${bg}`} style={{ width: 300, minWidth: 300, maxWidth: 300 }}>
         <div className="flex items-start gap-1">
           {block && <span className="mt-1 shrink-0"><Pill tone="blue" title="Merged Baseline Work Block">⊞ {r.children!.length}</Pill></span>}
-          {hasMethod && !block && <span className="mt-1 shrink-0" title="Detailed method instructions have been populated"><Pill tone="outline">📄 Method</Pill></span>}
-          <div className="min-w-0 flex-1"><ExpandableTextCell value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} label="Baseline Work Block / Activity Description" context={r.opId} placeholder="Describe the activity…" minWidth={block ? 190 : hasMethod ? 200 : 250} /></div>
+          <div className="min-w-0 flex-1"><HoverExpandTextBox value={r.description} onChange={(v) => onEdit((d) => { d.description = v; })} hasMethod={hasMethod && !block} placeholder="Describe the activity…" /></div>
         </div>
       </td>
       <td className="td" style={{ minWidth: 96 }}>

@@ -118,12 +118,15 @@ export function scanHeaderRow(aoa: unknown[][]): number {
 export function scoreBopCandidate(aoa: unknown[][]): number {
   const BOP_HDRS = ['phase #', 'route code', 'operation phase title', 'crew density', 'operation action category', 'labour content (hours)'];
   let hScore = 0;
+  let hIdx = -1;
   for (let i = 0; i < Math.min(15, aoa.length); i++) {
     const cells = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().trim());
     const s = BOP_HDRS.filter((h) => cells.some((c) => c.includes(h))).length;
-    if (s > hScore) hScore = s;
+    if (s > hScore) { hScore = s; hIdx = i; }
   }
-  const dataRows = Math.max(0, aoa.length - 15);
+  const dataRows = hIdx >= 0
+    ? (aoa.slice(hIdx + 1) as unknown[][]).filter((row) => (row as unknown[]).some((v) => v !== '' && v != null)).length
+    : 0;
   return hScore * 100 + Math.min(dataRows, 100);
 }
 
@@ -142,9 +145,9 @@ type XlsxUtils = { utils: { sheet_to_json<T>(ws: unknown, opts?: unknown): T[] }
  * @returns Row[] suitable for column-accessor functions
  */
 export function sheetToRows(XLSX: XlsxUtils, sh: unknown): Row[] {
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '', blankrows: false });
   const hIdx = scanHeaderRow(aoa);
-  if (hIdx === 0) return XLSX.utils.sheet_to_json<Row>(sh, { defval: '' });
+  if (hIdx === 0) return XLSX.utils.sheet_to_json<Row>(sh, { defval: '', blankrows: false });
   const headers = (aoa[hIdx] as unknown[]).map((v) => String(v ?? ''));
   return (aoa.slice(hIdx + 1) as unknown[][])
     .filter((row) => row.some((v) => v !== '' && v != null))
@@ -209,9 +212,19 @@ export function isHeaderOrHelperRow(r: Row): boolean {
   const title = str(col(r, 'Operation Phase Title', 'Description', 'Activity Description')).toLowerCase();
   const phase = str(col(r, 'Phase #', 'FPD Code', 'FPD', 'FPD Ref')).toLowerCase();
   const taskType = str(col(r, 'Task Type', 'Type')).toLowerCase();
+  const zone = str(col(r, 'Zone', 'Destination Zone', 'Destination Cell / Zone')).toLowerCase();
+  const crewDensity = str(col(r, 'Crew Density', 'Crew Size', 'Crew')).toLowerCase();
+  // Repeated column-header rows
   if (routeCode === 'route code' || routeCode === 'op number' || routeCode === 'op #') return true;
   if (title === 'operation phase title' || title === 'op description' || title === 'activity description') return true;
   if (phase === 'phase #' || phase === 'fpd number' || phase === 'fpd code') return true;
   if (taskType === 'sequential/parellel' || taskType === 'sequential/parallel') return true;
+  // Layout A Row 2: Present / Not Present metadata row
+  if (phase === 'present' || phase === 'not present') return true;
+  // Layout A Row 3: FREE-TEXT / PRE-DEFINED governance row
+  if (title === 'free-text') return true;
+  if (zone === 'define in targets tab') return true;
+  if (crewDensity === 'integer free-text') return true;
+  if (taskType === 'pre-defined') return true;
   return false;
 }
