@@ -51,7 +51,14 @@ export default function ExcelImportModal({ parsed, onClose }: Props) {
               </label>
             ))}
           </div>
-          <div className="mb-3 text-xs text-slate-500">Sheets recognised: {res?.sheetsRead.length ? res.sheetsRead.join(', ') : 'none'}</div>
+          <div className="mb-3 text-xs text-slate-500">
+            Sheets recognised: {res?.sheetsRead.length ? res.sheetsRead.join(', ') : 'none'}
+            {parsed.bopSheetName && (
+              <span className="ml-2 font-medium text-slate-700">
+                · Matched sheet &ldquo;{parsed.bopSheetName}&rdquo; · headers at Row {parsed.bopHeaderRow}
+              </span>
+            )}
+          </div>
           {(res?.skippedRows ?? 0) > 0 && (
             <div className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
               {res!.skippedRows} repeated header / helper row{res!.skippedRows !== 1 ? 's were' : ' was'} detected mid-sheet and skipped automatically.
@@ -64,6 +71,19 @@ export default function ExcelImportModal({ parsed, onClose }: Props) {
               {!res?.counts.length && <tr><td className="td-ro text-slate-500" colSpan={3}>Nothing to import.</td></tr>}
             </tbody>
           </table>
+          {parsed.bopSheetName && res && res.counts.reduce((s, c) => s + c.added + c.updated, 0) === 0 && (
+            <div className="mb-3 rounded border border-orange-200 bg-orange-50 p-3 text-xs text-orange-900">
+              <div className="mb-1 font-semibold">No rows imported — column layout may not match</div>
+              <p className="mb-1">Sheet: <span className="font-mono font-medium">{parsed.bopSheetName}</span> · headers at row {parsed.bopHeaderRow}</p>
+              {parsed.bopDetectedHeaders?.length && (
+                <p className="mb-1">Detected columns: <span className="font-mono">{parsed.bopDetectedHeaders.join(' · ')}</span></p>
+              )}
+              {parsed.bopFirstDataRow && (
+                <p className="break-all">First data row: <span className="font-mono">{Object.entries(parsed.bopFirstDataRow).slice(0, 5).map(([k, v]) => `${k}: ${String(v)}`).join(' · ')}</span></p>
+              )}
+              <p className="mt-1 text-orange-700">Download the template for the exact column layout expected by the importer.</p>
+            </div>
+          )}
           {(res?.warnings.length ?? 0) > 0 && (
             <div className="scroll-thin max-h-48 overflow-auto rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
               <div className="mb-1 font-semibold">{res!.warnings.length} warning(s)</div>

@@ -3,7 +3,7 @@ import { blankResource } from '../data/seed';
 import type { Component, Fpd, PfmeaItem, ResourceKind, Workspace } from '../types';
 import { RESOURCE_KINDS, uid } from '../types';
 import { num } from './format';
-import { type Row, type ExcelImportResult, type ParsedWorkbook, col, list, nOrNull, str, sheetToRows, scoreBopCandidate, BOP_CONTENT_SIGNALS } from './excelHelpers';
+import { type Row, type ExcelImportResult, type ParsedWorkbook, col, list, nOrNull, str, sheetToRows, scoreBopCandidate, scanHeaderRow, normaliseHeaderCell, BOP_CONTENT_SIGNALS } from './excelHelpers';
 import { processBopSheet } from './excelBopImport';
 
 /**
@@ -100,8 +100,8 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '', blankrows: false });
     let kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
     if (!kind) {
-      for (let i = 0; i < Math.min(15, aoa.length); i++) {
-        const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase()).join(' ');
+      for (let i = 0; i < Math.min(30, aoa.length); i++) {
+        const rowStr = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase()).join(' ');
         if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) { kind = 'bop'; break; }
       }
     }
@@ -111,11 +111,22 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
       sheets[kind] = sheetToRows(XLSX, sh);
     }
   }
+  let bopSheetName: string | undefined;
+  let bopHeaderRow: number | undefined;
+  let bopDetectedHeaders: string[] | undefined;
+  let bopFirstDataRow: Record<string, unknown> | undefined;
   if (bopCandidates.length) {
     bopCandidates.sort((a, b) => b.score - a.score);
-    sheets['bop'] = bopCandidates[0].rows;
+    const winner = bopCandidates[0];
+    sheets['bop'] = winner.rows;
+    bopSheetName = winner.name;
+    const winnerAoa = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[winner.name], { header: 1, defval: '', blankrows: false });
+    const hIdx = scanHeaderRow(winnerAoa);
+    bopHeaderRow = hIdx + 1;
+    bopDetectedHeaders = (winnerAoa[hIdx] as unknown[]).map((v) => normaliseHeaderCell(v)).filter(Boolean).slice(0, 6);
+    bopFirstDataRow = winner.rows.find((r) => Object.values(r).some((v) => v !== '' && v != null));
   }
-  return { fileName: file.name, sheets, errorCells };
+  return { fileName: file.name, sheets, errorCells, bopSheetName, bopHeaderRow, bopDetectedHeaders, bopFirstDataRow };
 }
 
 /**

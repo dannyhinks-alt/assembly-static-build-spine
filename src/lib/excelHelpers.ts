@@ -7,6 +7,18 @@ export type Row = Record<string, unknown>;
 export const key = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 export const str = (v: unknown): string => (v == null ? '' : String(v).trim());
 
+/**
+ * Purpose: Normalise header cell text by collapsing embedded newlines, carriage returns and
+ *   runs of whitespace to a single space.  Excel's "Wrap Text" option embeds real \n characters
+ *   inside header cells; without this step "Operation\nPhase Title" never matches the
+ *   canonical "Operation Phase Title" signal.
+ *
+ * Downstream impact: drives scanHeaderRow, scoreBopCandidate, classifySheet and sheetToRows.
+ */
+export function normaliseHeaderCell(v: unknown): string {
+  return String(v ?? '').replace(/\s+/g, ' ').trim();
+}
+
 /** Sentinel values that workbooks use to mean "empty" on text/reference fields. */
 const SENTINELS = new Set(['none', 'n/a', 'na', 'n a', '-', '–', '—', 'tbc', 'tbd', 'nil', '']);
 
@@ -55,7 +67,19 @@ export interface ExcelImportResult {
   sheetsRead: string[];
   skippedRows: number;
 }
-export interface ParsedWorkbook { fileName: string; sheets: Record<string, Row[]>; errorCells: string[] }
+export interface ParsedWorkbook {
+  fileName: string;
+  sheets: Record<string, Row[]>;
+  errorCells: string[];
+  /** Name of the worksheet selected as the BOP source. */
+  bopSheetName?: string;
+  /** 1-based row index where column headers were found. */
+  bopHeaderRow?: number;
+  /** Up to six column header strings detected in the BOP sheet. */
+  bopDetectedHeaders?: string[];
+  /** First non-empty data row from the BOP sheet, for mismatch diagnostics. */
+  bopFirstDataRow?: Record<string, unknown>;
+}
 
 const SHEET_KINDS: [RegExp, string][] = [
   [/pfmea|fmea|risk/i, 'pfmea'],
@@ -91,14 +115,14 @@ function scoreHeaderRow(cells: string[]): number {
 export function scanHeaderRow(aoa: unknown[][]): number {
   const WEAK = ['route code', 'phase #', 'operation phase title', 'op #', 'fpd code', 'failure mode', 'bom ref', 'name', 'kind', 'resource'];
   let best = { idx: -1, score: 0 };
-  for (let i = 0; i < Math.min(15, aoa.length); i++) {
-    const cells = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#()\- ]+/g, ' ').trim());
+  for (let i = 0; i < Math.min(30, aoa.length); i++) {
+    const cells = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase().replace(/[^a-z0-9#()\- ]+/g, ' ').trim());
     const score = scoreHeaderRow(cells);
     if (score >= 2 && score > best.score) best = { idx: i, score };
   }
   if (best.idx >= 0) return best.idx;
-  for (let i = 0; i < Math.min(15, aoa.length); i++) {
-    const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9#]+/g, ' ').trim()).join(' | ');
+  for (let i = 0; i < Math.min(30, aoa.length); i++) {
+    const rowStr = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase().replace(/[^a-z0-9#]+/g, ' ').trim()).join(' | ');
     if (WEAK.some((s) => rowStr.includes(s))) return i;
   }
   return 0;
@@ -119,8 +143,8 @@ export function scoreBopCandidate(aoa: unknown[][]): number {
   const BOP_HDRS = ['phase #', 'route code', 'operation phase title', 'crew density', 'operation action category', 'labour content (hours)'];
   let hScore = 0;
   let hIdx = -1;
-  for (let i = 0; i < Math.min(15, aoa.length); i++) {
-    const cells = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase().trim());
+  for (let i = 0; i < Math.min(30, aoa.length); i++) {
+    const cells = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase());
     const s = BOP_HDRS.filter((h) => cells.some((c) => c.includes(h))).length;
     if (s > hScore) { hScore = s; hIdx = i; }
   }
@@ -148,7 +172,7 @@ export function sheetToRows(XLSX: XlsxUtils, sh: unknown): Row[] {
   const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '', blankrows: false });
   const hIdx = scanHeaderRow(aoa);
   if (hIdx === 0) return XLSX.utils.sheet_to_json<Row>(sh, { defval: '', blankrows: false });
-  const headers = (aoa[hIdx] as unknown[]).map((v) => String(v ?? ''));
+  const headers = (aoa[hIdx] as unknown[]).map((v) => normaliseHeaderCell(v));
   return (aoa.slice(hIdx + 1) as unknown[][])
     .filter((row) => row.some((v) => v !== '' && v != null))
     .map((row) => {
@@ -171,8 +195,8 @@ export function classifySheet(name: string, XLSX: XlsxUtils, sh: unknown): strin
   const byName = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
   if (byName) return byName;
   const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
-  for (let i = 0; i < Math.min(15, aoa.length); i++) {
-    const rowStr = (aoa[i] as unknown[]).map((v) => String(v ?? '').toLowerCase()).join(' ');
+  for (let i = 0; i < Math.min(30, aoa.length); i++) {
+    const rowStr = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase()).join(' ');
     if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) return 'bop';
   }
   return undefined;
