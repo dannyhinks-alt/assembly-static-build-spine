@@ -53,6 +53,9 @@ export function CpmBadge({ node, nearHrs }: { node?: CpmNode; nearHrs: number })
   return <Pill tone="outline" title={`Float ${fmt(node.float, 1)} elapsed h`}>Float {fmt(node.float, 0)} h</Pill>;
 }
 
+/** Row threshold above which FPDs auto-collapse on first render (all except the first). */
+const AUTO_COLLAPSE_THRESHOLD = 150;
+
 export default function Tab2Bop() {
   const { ws, mutate, model: m, toast } = useStore();
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -60,6 +63,14 @@ export default function Tab2Bop() {
   const [q, setQ] = useState('');
   const [cls, setCls] = useState<'' | Classification>('');
   const [only, setOnly] = useState<'' | 'lift' | 'critical' | 'ar' | 'block'>('');
+  // Per-FPD collapse state: Set of fpdIds that are currently collapsed.
+  // When total BOP rows exceed AUTO_COLLAPSE_THRESHOLD, all FPDs except the first start collapsed.
+  const [collapsedFpds, setCollapsedFpds] = useState<Set<string>>(() => {
+    const totalRows = ws.rows.length;
+    if (totalRows <= AUTO_COLLAPSE_THRESHOLD) return new Set<string>();
+    const allFpdIds = [...new Set(ws.rows.map((r) => r.fpdId))];
+    return new Set(allFpdIds.slice(1));
+  });
   // Drawer state: { topId, childId | null }
   const [drawer, setDrawer] = useState<{ topId: string; childId: string | null } | null>(null);
   // Bulk edit state
@@ -252,6 +263,7 @@ export default function Tab2Bop() {
           <button className="btn" disabled={!canUnmerge} onClick={unmerge}>⊟ Unmerge / expand</button>
           <button className="btn" disabled={!sel.size} onClick={() => { if (window.confirm(`Delete ${sel.size} selected row(s)?`)) removeRows([...sel]); }}>Delete selected</button>
           <button className="btn" onClick={async () => { try { const blob = await exportBop(ws, m); download(`${fileSafe(ws.meta.name)}-BOP.xlsx`, blob, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); } catch { toast('warn', 'BOP export failed — check the browser console for details.'); } }}>Export BOP (.xlsx)</button>
+          <button className="btn" title={collapsedFpds.size > 0 ? 'Expand all FPDs' : 'Collapse all FPDs'} onClick={() => { if (collapsedFpds.size > 0) { setCollapsedFpds(new Set()); } else { setCollapsedFpds(new Set(m.fpds.map((f) => f.fpdId))); } }}>{collapsedFpds.size > 0 ? '▸ Expand all FPDs' : '▾ Collapse all FPDs'}</button>
           {sel.size > 0 && <span className="text-[12px] tabular-nums text-slate-500">{sel.size} selected <button className="btn-ghost" onClick={() => { setSel(new Set()); resetBulk(); }}>clear</button></span>}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Op #, description, notes…" className="inp w-56" aria-label="Search rows" />
@@ -327,24 +339,28 @@ export default function Tab2Bop() {
                   const shown = rows.filter(match);
                   const roll = m.fpdRoll.find((x) => x.fpd.fpdId === f.fpdId);
                   const cell = ws.cells.find((c) => c.id === f.assignedCellId);
+                  // Auto-expand when a search query matches rows in this FPD
+                  const isFpdCollapsed = collapsedFpds.has(f.fpdId) && !(q.trim() && shown.length > 0);
+                  const toggleFpdCollapse = () => setCollapsedFpds((prev) => { const next = new Set(prev); next.has(f.fpdId) ? next.delete(f.fpdId) : next.add(f.fpdId); return next; });
                   return (
                     <Fragment key={f.fpdId}>
                       <tr>
                         <td colSpan={3} className="sticky left-0 z-20 border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5" style={{ width: 470, minWidth: 470, maxWidth: 470 }}>
                           <span className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-[12.5px]" title={`${f.fpdCode} — ${f.title}`}>
+                            <button className="shrink-0 text-slate-500 hover:text-slate-900" onClick={toggleFpdCollapse} aria-expanded={!isFpdCollapsed} aria-label={isFpdCollapsed ? `Expand ${f.fpdCode}` : `Collapse ${f.fpdCode}`}>{isFpdCollapsed ? '▸' : '▾'}</button>
                             <b className="text-slate-900">{f.fpdCode}</b><span className="truncate text-slate-700">{f.title}</span><span className="text-[11px] text-slate-500">Rev {f.revision}</span>
                           </span>
                         </td>
                         <td colSpan={30} className="border-b border-t border-slate-200 bg-slate-100 px-2 py-1.5 text-[11.5px] tabular-nums text-slate-600">
                           <span className="flex items-center gap-3">
                             <span>{cell ? `Cell ${cell.number} · ${cell.name}` : 'No cell'}</span><span>{f.subAssemblyBomRef}</span>
-                            <span>{fmtInt(rows.length)} Baseline work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}</span>
+                            <span>{fmtInt(rows.length)} Baseline work block(s){shown.length !== rows.length ? ` · ${shown.length} shown` : ''}{isFpdCollapsed ? ' · collapsed' : ''}</span>
                             <span>{fmtInt(roll?.labourHrs ?? 0)} labour h</span><span>{fmtInt(roll?.lifts ?? 0)} lift(s)</span>
                             <button className="btn-ghost !text-slate-800" onClick={() => addRow(f.fpdId)}>＋ Add activity</button>
                           </span>
                         </td>
                       </tr>
-                      {shown.map((r) => {
+                      {!isFpdCollapsed && shown.map((r) => {
                         const calc = m.calcs.get(r.id)!;
                         const block = isBlock(r);
                         const isOpen = open.has(r.id);
@@ -370,8 +386,8 @@ export default function Tab2Bop() {
                           </Fragment>
                         );
                       })}
-                      {shown.length === 0 && (
-                        <tr><td colSpan={33} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : <span>No activities yet. Use <b>+ Add activity</b> to build manually, or <b>Import Excel / CSV</b> (Master BOP &amp; PFMEA Combined sheet) to load in bulk. Column mapping: Phase = FPD, Route Code = Op, Labour Content = Manning, Crew Density = Crew, Zone = Destination Zone.</span>}</td></tr>
+                      {!isFpdCollapsed && shown.length === 0 && (
+                        <tr><td colSpan={33} className="border-b border-slate-100 px-3 py-2 text-[12px] text-slate-500">{rows.length ? 'No rows match the current search / filters.' : <span>No activities yet. Use <b>+ Add activity</b> to build manually, or <b>Import Excel / CSV</b> (Bill of Process .xlsx / .csv) to load in bulk. Column mapping: Phase = FPD, Route Code = Op, Labour Content = Manning, Crew Density = Crew, Zone = Destination Zone.</span>}</td></tr>
                       )}
                     </Fragment>
                   );

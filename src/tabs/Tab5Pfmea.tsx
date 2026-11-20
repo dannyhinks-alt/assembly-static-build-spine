@@ -173,7 +173,7 @@ export default function Tab5Pfmea() {
           rowClass={(p) => (firstOfGroup(p, sorted.indexOf(p)) && sorted.indexOf(p) > 0 ? '[&>td]:border-t-2 [&>td]:border-t-slate-200' : '')}
           onClone={addMode} cloneGlyph="＋" cloneTitle="Add another failure mode to this activity"
           onDelete={(p) => mutate((d) => { d.pfmea = d.pfmea.filter((x) => x.id !== p.id); })}
-          empty="No PFMEA items for the current filter. Add a failure mode with '＋ Add failure mode', or import from an Excel file containing a 'PFMEA' sheet (columns: Op #, Failure Mode, Effect, Severity, Cause, Occurrence, Detection)." />
+          empty="No PFMEA items for the current filter. Click '＋ Add PFMEA line' above to record failure modes and link them to BOP Op # steps." />
         <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[11.5px] text-slate-500">Grouped by BOP activity; activities are ordered by their highest open RPN. ＋ at the end of a line adds another failure mode to the same activity.</div>
       </Card>
       <Card className="mt-4" title="Quality Hold Points" pad={false} right={<button className="btn-primary" onClick={() => mutate((d) => { d.holdPoints.push({ id: uid('hp'), fpdId: firstFpd, opId: '', type: 'Hold', title: 'New hold point', notes: '', status: 'Planned' }); })}>＋ Add hold point</button>}>

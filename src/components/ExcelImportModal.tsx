@@ -12,7 +12,7 @@ interface Props {
 
 export default function ExcelImportModal({ parsed, onClose }: Props) {
   const st = useStore();
-  const [mode, setMode] = useState<'merge' | 'replace'>('merge');
+  const [mode, setMode] = useState<'merge' | 'replace'>('replace');
   const { result: res, error: importError } = useMemo(() => {
     try {
       return { result: buildImport(parsed, st.ws, mode), error: null };
@@ -41,12 +41,12 @@ export default function ExcelImportModal({ parsed, onClose }: Props) {
       {!importError && (
         <>
           <div className="mb-3 flex flex-wrap gap-4">
-            {(['merge', 'replace'] as const).map((m) => (
+            {(['replace', 'merge'] as const).map((m) => (
               <label key={m} className="flex cursor-pointer items-start gap-2">
                 <input type="radio" className="mt-0.5 accent-slate-800" checked={mode === m} onChange={() => setMode(m)} />
                 <span>
-                  <span className="block font-medium text-slate-800">{m === 'merge' ? 'Merge (upsert)' : 'Replace'}</span>
-                  <span className="block max-w-[260px] text-xs text-slate-500">{m === 'merge' ? 'Match on FPD Code, Op #, BOM Ref and resource name. Existing rows are updated; new rows added.' : 'Tables present in the workbook replace the current ones (FPDs, BOP, PFMEA). Registries are kept.'}</span>
+                  <span className="block font-medium text-slate-800">{m === 'replace' ? 'Replace (recommended for full BOP reloads)' : 'Merge (upsert)'}</span>
+                  <span className="block max-w-[300px] text-xs text-slate-500">{m === 'replace' ? 'Replaces FPDs and BOP activities — your Equipment, Component registries, Floor Plan, and PFMEA entries are kept.' : 'Match on FPD Code, Op #, BOM Ref and resource name. Existing rows are updated; new rows added.'}</span>
                 </span>
               </label>
             ))}

@@ -77,11 +77,13 @@ export async function exportWorkbook(ws: Workspace, m: Model, template = false):
 }
 
 /**
- * Purpose: Dedicated BOP export with canonical round-trip column order and an inline PFMEA column set.
- *   Produces 'Bill of Process (Summary)' and 'Master BOP & PFMEA Combined' sheets.
- *   Column order is a round-trip contract — do not reorder.
+ * Purpose: Dedicated BOP export — single canonical round-trip sheet.
+ *   Column order is a round-trip contract — do not reorder without updating the importer.
  *
- * Downstream impact: exported file is consumed by Master Hub (summary@V2 workflow) and can be re-imported.
+ * Formula: one row per leaf BopRow; Hold Points for each Op # are joined with "; ".
+ *
+ * Downstream impact: exported file re-imports losslessly via parseWorkbook / buildImport.
+ *   Consumed by Master Hub (summary@V2 workflow).
  *
  * @returns Blob containing an .xlsx file
  */
@@ -91,25 +93,44 @@ export async function exportBop(ws: Workspace, m: Model): Promise<Blob> {
   const sheet = makeSheetHelper(XLSX, wb);
   const zone = (id: string) => ws.zones.find((z) => z.id === id)?.name ?? '';
   const fpdOf = (id: string) => ws.fpds.find((f) => f.fpdId === id);
-  const names = (ids: string[]) => ids.map((i) => ws.resources.find((r) => r.id === i)?.name ?? '').filter(Boolean).join('; ');
-  const cellName = (id: string) => { const c = ws.cells.find((x) => x.id === id); return c ? `Cell ${c.number} · ${c.name}` : ''; };
+  const names = (ids: string[]) => ids.map((i) => ws.resources.find((r) => r.id === i)?.name ?? '').filter(Boolean).join(', ');
   const hpFor = (opId: string) => ws.holdPoints.filter((h) => h.opId === opId).map((h) => h.title).join('; ');
   const bopRows: Row[] = [];
   for (const r of ws.rows) {
     for (const l of leavesOf(r)) {
-      const node = m.cpm.nodes.get(r.id); const calc = m.calcs.get(r.id); const f = fpdOf(l.fpdId); const arPct = calc?.arPct;
-      bopRows.push({ 'FPD Code': f?.fpdCode ?? '', 'FPD Title': f?.title ?? '', 'Cell Name': cellName(f?.assignedCellId ?? ''), 'Op #': l.opId, 'Baseline Work Block': r.children?.length ? r.opId : '', Description: l.description, 'Task Type': l.taskType, Predecessors: l.predecessors.join(', '), 'Origin Zone': zone(l.originZoneId), 'Destination Zone': zone(l.destZoneId), 'Floor Level': FLOOR_LEVELS[l.floorLevel] ?? 'Ground', 'Component Name / Description': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join('; '), 'Crew Density': l.crewSize, 'Equipment / Bay Run Time (hrs)': l.runHrs, 'Operator Touch Time (hrs)': l.touchHrs, 'Labour Content (Hours)': l.manningHrs, 'Baseline Hours': l.baselineHrs ?? '', 'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '', 'Attendance Ratio (%)': arPct != null ? +(arPct * 100).toFixed(1) : 'Manual op', 'Operation Action Category': l.classification, 'Specific Action Type': l.actionType, 'L1 Parent Tool': names(l.rigIds), Crane: names(l.craneIds), Rigging: names(l.riggingIds), Vehicles: names(l.vehicleIds), 'L3 Sub-Tool': names(l.standIds), 'Lift Count': l.liftCount, 'Move Count': l.moveCount, 'Schedule Start (h)': node ? +node.es.toFixed(1) : '', 'Schedule Finish (h)': node ? +node.ef.toFixed(1) : '', 'Float (h)': node ? +node.float.toFixed(1) : '', Critical: node?.critical ? 'Y' : 'N', 'Quality Gate Sign-off': hpFor(l.opId), Rationale: l.rationale ?? '', Comments: l.notes });
+      const node = m.cpm.nodes.get(r.id); const f = fpdOf(l.fpdId);
+      bopRows.push({
+        'Phase #': f?.fpdCode ?? '',
+        'Route Code': l.opId,
+        'Operation Phase Title': l.description,
+        'Detailed Method Steps': l.methodDetail ?? '',
+        Zone: zone(l.destZoneId),
+        'Task Type': l.taskType,
+        'Predecessor Phase #': l.predecessors.join(', '),
+        'Component Name': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join(', '),
+        'Crew Density': l.crewSize,
+        'Equipment / Bay Run Time (hrs)': l.runHrs,
+        'Operator Touch Time (hrs)': l.touchHrs,
+        'Labour Content (Hours)': l.manningHrs,
+        'Baseline Hours': l.baselineHrs ?? '',
+        'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '',
+        'Operation Action Category': l.classification,
+        'Specific Action Type': l.actionType,
+        Crane: names(l.craneIds),
+        'L1 Parent Tool': names(l.rigIds),
+        Rigging: names(l.riggingIds),
+        'L3 Sub-Tool': names(l.standIds),
+        Consumables: l.consumables ?? '',
+        'Quality Gate Sign-off': hpFor(l.opId),
+        Rationale: l.rationale ?? '',
+        Comments: l.notes,
+        'Schedule Start (h)': node ? +node.es.toFixed(1) : '',
+        'Schedule Finish (h)': node ? +node.ef.toFixed(1) : '',
+        Critical: node?.critical ? 'Y' : 'N',
+      });
     }
   }
-  sheet('Bill of Process (Summary)', bopRows, [10, 32, 24, 10, 11, 48, 10, 16, 24, 24, 10, 36, 7, 12, 13, 15, 12, 11, 11, 15, 20, 24, 20, 20, 16, 7, 7, 14, 14, 10, 8, 24, 36, 36]);
-  const combined: Row[] = [];
-  for (const r of ws.rows) {
-    for (const l of leavesOf(r)) {
-      const node = m.cpm.nodes.get(r.id); const f = fpdOf(l.fpdId); const pf = ws.pfmea.find((p) => p.opId === l.opId);
-      combined.push({ 'Phase #': f?.fpdCode ?? '', 'Route Code': l.opId, 'Operation Phase Title': l.description, 'Detailed Method Steps': l.methodDetail ?? '', Zone: zone(l.destZoneId), 'Task Type': l.taskType, 'Predecessor Phase #': l.predecessors.join(', '), 'Component Name': l.componentIds.map((i) => ws.components.find((c) => c.id === i)?.name ?? '').filter(Boolean).join('; '), 'Crew Density': l.crewSize, 'Equipment / Bay Run Time (hrs)': l.runHrs, 'Operator Touch Time (hrs)': l.touchHrs, 'Labour Content (Hours)': l.manningHrs, 'Baseline Hours': l.baselineHrs ?? '', 'Variance (h)': l.baselineHrs != null ? +(l.baselineHrs - l.manningHrs).toFixed(2) : '', Crane: names(l.craneIds), 'L1 Parent Tool': names(l.rigIds), Rigging: names(l.riggingIds), 'L3 Sub-Tool': names(l.standIds), Consumables: l.consumables ?? '', 'Quality Gate Sign-off': hpFor(l.opId), Rationale: l.rationale ?? '', Comments: l.notes, 'Failure Mode': pf?.failureMode ?? '', 'Control Doc Required': pf ? (pf.controlDocForced ? 'Y' : 'N') : '', 'Effect of Failure': pf?.effect ?? '', 'Cause of Failure': pf?.cause ?? '', 'Current Process Controls': pf?.controls ?? '', 'Recommended Corrective Action': pf?.recommendedAction ?? '', 'Severity (1-10)': pf?.s ?? '', 'Occurrence (1-10)': pf?.o ?? '', 'Detection (1-10)': pf?.d ?? '', 'RPN Score': pf ? pf.s * pf.o * pf.d : '', 'RPN Risk Level': pf ? (pf.s * pf.o * pf.d >= 200 ? 'RED' : pf.s * pf.o * pf.d >= 120 ? 'SERIOUS' : pf.s * pf.o * pf.d >= 80 ? 'AMBER' : 'GREEN') : '', 'Assigned Tooling ID': pf ? names(pf.resourceIds) : '', 'Phase Status': pf?.status ?? '', 'Schedule Start (h)': node ? +node.es.toFixed(1) : '', 'Schedule Finish (h)': node ? +node.ef.toFixed(1) : '', Critical: node?.critical ? 'Y' : 'N', 'Operation Action Category': l.classification, 'Specific Action Type': l.actionType });
-    }
-  }
-  sheet('Master BOP & PFMEA Combined', combined, [10, 10, 48, 36, 24, 10, 16, 36, 7, 12, 13, 15, 12, 11, 20, 24, 20, 16, 24, 24, 24, 24, 36, 10, 36, 36, 36, 44, 10, 10, 10, 8, 10, 24, 10, 14, 14, 8, 20, 24]);
+  sheet('Bill of Process', bopRows, [10, 10, 48, 36, 24, 10, 16, 36, 7, 12, 13, 15, 12, 11, 20, 24, 20, 24, 20, 16, 24, 24, 24, 36, 14, 14, 8]);
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
   return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

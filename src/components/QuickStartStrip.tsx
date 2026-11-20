@@ -5,7 +5,7 @@ export default function QuickStartStrip() {
   const { ws, setTab } = useStore();
   if (ws.fpds.length > 0 || ws.rows.length > 0) return null;
   const steps: { n: number; title: string; desc: string; action?: () => void; label: string; hint?: string }[] = [
-    { n: 1, title: 'Import BOP.xlsx', desc: 'Load your Master BOP & PFMEA Combined Excel sheet to populate the Bill of Process.', label: 'Import Excel (.xlsx)', hint: 'Use the Import Excel (.xlsx) button in the top bar.' },
+    { n: 1, title: 'Import BOP.xlsx', desc: 'Import your Bill of Process Excel (.xlsx) or CSV file to populate FPDs, route steps, components, and tooling.', label: 'Import Excel (.xlsx)', hint: 'Use the Import Excel (.xlsx) button in the top bar.' },
     { n: 2, title: 'Upload & Calibrate Floor Plan', desc: 'Add a floor-plan image in Tab 1, trace cell boundaries, then review footprint in Tab 7.', action: () => setTab(1), label: 'Go to Tab 1 →' },
     { n: 3, title: 'Review Release Gates', desc: 'Check the 10-point integrity panel and confirm all assumptions before submission.', action: () => setTab(9), label: 'Go to Tab 9 →' },
   ];

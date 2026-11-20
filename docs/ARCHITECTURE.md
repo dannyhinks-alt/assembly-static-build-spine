@@ -45,7 +45,7 @@ src/
 │   └── space.ts          Factory floor-plan space calculations
 │
 ├── lib/                  Stateless helpers — no React, no Zustand
-│   ├── excel.ts          SheetJS import/export (BOP round-trip, PFMEA, resources)
+│   ├── excel.ts          SheetJS import/export (BOP-only round-trip, resources; PFMEA never imported from Excel)
 │   ├── persistence.ts    JSON workspace serialisation, localStorage, FSA API
 │   ├── format.ts         Number/date formatting, RAG hex/label maps
 │   └── geometry.ts       Layout geometry utilities (zone bounding boxes, overlaps)
@@ -67,7 +67,7 @@ src/
 │
 ├── tabs/                 Nine tab views — purely declarative, call engine/lib
 │   ├── Tab1Targets.tsx   Programme targets & learning curve
-│   ├── Tab2Bop.tsx       Bill of Process (BOP) central spine
+│   ├── Tab2Bop.tsx       Bill of Process (BOP) central spine; per-FPD collapse/expand
 │   ├── OperationMethodDrawer.tsx  Slide-over for full operation edit (extracted from Tab2)
 │   ├── Tab3Equipment.tsx Tooling & equipment registry
 │   ├── Tab4Lifts.tsx     Lift & move analysis

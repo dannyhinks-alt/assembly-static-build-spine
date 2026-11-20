@@ -179,3 +179,31 @@ describe('processBopSheet — PFMEA isolation', () => {
     expect(ws.rows).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// processBopSheet — intra-sheet duplicate Op # auto-suffix
+// ---------------------------------------------------------------------------
+
+describe('processBopSheet — intra-sheet duplicate Op # auto-suffix', () => {
+  it('auto-suffixes the second occurrence of a duplicate Op # and warns', () => {
+    const rows = [
+      { 'Phase #': '4', 'Route Code': '010', 'Operation Phase Title': 'First install', 'Task Type': 'Sequential', 'Labour Content (Hours)': 1 },
+      { 'Phase #': '4', 'Route Code': '010', 'Operation Phase Title': 'Duplicate op', 'Task Type': 'Sequential', 'Labour Content (Hours)': 0.5 },
+    ];
+    const { ws, warnings } = runBop(rows);
+    expect(ws.rows).toHaveLength(2);
+    expect(ws.rows[0].opId).toBe('010');
+    expect(ws.rows[1].opId).toBe('010-2');
+    expect(warnings.some((w) => w.includes('010-2'))).toBe(true);
+  });
+
+  it('suffixes a third occurrence as -3', () => {
+    const rows = [
+      { 'Phase #': '5', 'Route Code': '020', 'Operation Phase Title': 'First', 'Task Type': 'Sequential', 'Labour Content (Hours)': 1 },
+      { 'Phase #': '5', 'Route Code': '020', 'Operation Phase Title': 'Second', 'Task Type': 'Sequential', 'Labour Content (Hours)': 1 },
+      { 'Phase #': '5', 'Route Code': '020', 'Operation Phase Title': 'Third', 'Task Type': 'Sequential', 'Labour Content (Hours)': 1 },
+    ];
+    const { ws } = runBop(rows);
+    expect(ws.rows.map((r) => r.opId)).toEqual(['020', '020-2', '020-3']);
+  });
+});

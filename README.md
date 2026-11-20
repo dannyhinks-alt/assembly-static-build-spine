@@ -121,11 +121,14 @@ integrity · 10 assumptions confirmed. Checks 6–8 use separate code from the m
 
 ### Excel (.xlsx)
 
-*More ▾ → Download Excel import template* gives the exact layout. Sheets are recognised by name: `FPDs`, `BOP`,
-`Components`, `Resources`, `PFMEA`. Rows are matched on FPD Code, Op #, BOM Ref and resource kind + name. Multi-value
-cells (predecessors, components, the five resource tag columns) are separated by `;` or `,`. Excel error cells
-(`#REF!`, `#N/A`, …) are read as blank and listed in the import preview. Unknown resources or components referenced
-from the BOP sheet are created with blank ratings and flagged.
+*More ▾ → Download Excel import template* gives the exact layout. Sheets are recognised by content first (BOP
+header signals such as `Phase #`, `Route Code`, `Labour Content (Hours)`) and then by tab name: `FPDs`,
+`Components`, `Resources`. PFMEA data is never imported from Excel; the register is maintained manually in Tab 5.
+Rows are matched on FPD Code, Op #, BOM Ref and resource kind + name. Multi-value cells (predecessors, components,
+the five resource tag columns) are separated by `;` or `,`. Excel error cells (`#REF!`, `#N/A`, …) are read as
+blank and listed in the import preview. Unknown resources or components referenced from the BOP sheet are created
+with blank ratings and flagged. Duplicate Op # values within a single sheet are auto-suffixed (`010-2`, `010-3`)
+and warned.
 
 ### Floor layout geometry
 

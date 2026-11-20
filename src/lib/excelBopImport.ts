@@ -165,6 +165,8 @@ export function processBopSheet(
   const flat = new Map<string, BopRow>();
   for (const r of ws.rows) for (const l of leavesOf(r)) flat.set(l.opId.trim().toLowerCase(), l);
   const lastDestZone = new Map<string, string>();
+  // Track Op # keys added in this import batch to detect intra-sheet duplicates.
+  const seenInBatch = new Set<string>();
   let skippedRows = 0;
   for (const r of bopRows) {
     if (isHeaderOrHelperRow(r)) { skippedRows++; continue; }
@@ -172,8 +174,16 @@ export function processBopSheet(
     const rawCodeCell = col(r, 'FPD Code', 'FPD', 'FPD Ref', 'Phase #', 'Phase');
     const { code, title: fpdTitle } = normaliseFpdCode(rawCodeCell);
     if (noneOrEmpty(rawOp) && noneOrEmpty(str(col(r, 'Operation Phase Title', 'Description', 'Activity Description', 'Baseline Work Block / Activity Description', 'Activity')))) continue;
-    const op = resolveOpId(rawOp, code, needsPrefix, opRewriteMap);
+    let op = resolveOpId(rawOp, code, needsPrefix, opRewriteMap);
     if (!op || !code) { if (op || code) warnings.push(`BOP row skipped — needs both FPD Code and Op # (got "${code}" / "${op}").`); continue; }
+    // Auto-suffix intra-sheet duplicate Op # (second occurrence in same file → suffix -2, -3, …)
+    if (seenInBatch.has(op.toLowerCase())) {
+      let suffix = 2;
+      while (seenInBatch.has(`${op}-${suffix}`.toLowerCase())) suffix++;
+      warnings.push(`Duplicate Op # "${op}" in this sheet — renamed to "${op}-${suffix}". Check predecessor links.`);
+      op = `${op}-${suffix}`;
+    }
+    seenInBatch.add(op.toLowerCase());
     const fpd = ensureFpd(code, fpdTitle);
     processBopRow(r, op, code, fpd, ws, warnings, c, cCmp, flat, lastDestZone, needsPrefix, opRewriteMap, findCmp, ensureRes, cellByNumber);
   }
