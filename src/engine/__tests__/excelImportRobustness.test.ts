@@ -38,10 +38,10 @@ describe('sentinelFree', () => {
 });
 
 describe('normaliseFpdCode', () => {
-  it('converts bare integer to FPD-NNN format', () => {
-    expect(normaliseFpdCode(4)).toEqual({ code: 'FPD-004', title: 'Phase 4' });
-    expect(normaliseFpdCode('4')).toEqual({ code: 'FPD-004', title: 'Phase 4' });
-    expect(normaliseFpdCode('12')).toEqual({ code: 'FPD-012', title: 'Phase 12' });
+  it('returns bare numeric code with canonical title', () => {
+    expect(normaliseFpdCode(4)).toEqual({ code: '4', title: 'Install Unit Module' });
+    expect(normaliseFpdCode('4')).toEqual({ code: '4', title: 'Install Unit Module' });
+    expect(normaliseFpdCode('12')).toEqual({ code: '12', title: 'Install Upper CRDM' });
   });
 
   it('leaves existing FPD codes unchanged', () => {
@@ -100,7 +100,7 @@ describe('processBopSheet — real workbook row scenario', () => {
    *   Row 3: repeated header row     (Phase # = "Phase #",     Route Code = "Route Code")
    *   Row 4: real data row           (Phase # = 4, Route Code = 10, …, Consumables = "None", etc.)
    */
-  it('imports only 1 BOP row; FPD code is FPD-004; consumables is empty; hold point is created; zero errors', () => {
+  it('imports only 1 BOP row; FPD code is "4" with canonical title; consumables is empty; hold point is created; zero errors', () => {
     const helperRow = {
       'Phase #': 'FPD Number', 'Route Code': 'Route Code / Op #', 'Operation Phase Title': 'Op Description',
       'Task Type': 'Sequential/Parellel', 'Predecessors': 'Predecessor Phase #',
@@ -159,10 +159,10 @@ describe('processBopSheet — real workbook row scenario', () => {
     expect(ws.rows[0].opId).toBe('10');
     expect(ws.rows[0].description).toBe('Marshall & Doc Release');
 
-    // FPD must be "FPD-004" with title "Phase 4" — NOT "Phase #" or "FPD Number"
+    // FPD must be bare code "4" with canonical title — NOT "Phase #" or "FPD Number"
     expect(ws.fpds).toHaveLength(1);
-    expect(ws.fpds[0].fpdCode).toBe('FPD-004');
-    expect(ws.fpds[0].title).toBe('Phase 4');
+    expect(ws.fpds[0].fpdCode).toBe('4');
+    expect(ws.fpds[0].title).toBe('Install Unit Module');
 
     // Consumables sentinel "None" must NOT be stored
     expect(ws.rows[0].consumables).toBeUndefined();

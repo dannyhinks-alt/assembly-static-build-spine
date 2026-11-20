@@ -202,7 +202,9 @@ describe('Master BOP Row-4 import', () => {
     expect(row?.crewSize).toBe(2);
   });
 
-  it('buildImport creates PFMEA entry when Failure Mode is populated on a BOP row', () => {
+  it('buildImport does NOT create PFMEA entries from BOP rows — PFMEA isolation', () => {
+    // PFMEA import from Excel is intentionally disabled; ws.pfmea is never touched
+    // during BOP import even when Failure Mode columns are present on the sheet.
     const ws = baselineFixture();
     const fpd = ws.fpds[0];
     const parsed: ParsedWorkbook = {
@@ -228,13 +230,10 @@ describe('Master BOP Row-4 import', () => {
     };
     const before = ws.pfmea.length;
     const result = buildImport(parsed, ws, 'replace');
-    expect(result.ws.pfmea.length).toBe(before + 1);
-    const p = result.ws.pfmea.find((x) => x.failureMode === 'Incorrect torque applied')!;
-    expect(p).toBeTruthy();
-    expect(p.effect).toBe('Joint failure in service');
-    expect(p.s).toBe(8);
-    expect(p.o).toBe(4);
-    expect(p.d).toBe(3);
+    // PFMEA register must be unchanged
+    expect(result.ws.pfmea.length).toBe(before);
+    // BOP row must still be created correctly
+    expect(result.ws.rows.some((r) => r.opId === '010')).toBe(true);
   });
 
   it('buildImport auto-prefixes duplicate Route Codes across phases', () => {

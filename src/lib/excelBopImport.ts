@@ -1,6 +1,6 @@
 // BOP-specific import logic — duplicate-route-code detection, per-row BOP processing, inline PFMEA creation.
 import { blankRow } from '../data/seed';
-import type { ActionType, BopRow, Classification, Component, Fpd, PfmeaItem, ResourceKind, Workspace } from '../types';
+import type { ActionType, BopRow, Classification, Component, Fpd, ResourceKind, Workspace } from '../types';
 import { ACTION_TYPES, FLOOR_LEVELS, uid } from '../types';
 import { leavesOf } from '../engine/model';
 import { type Row, col, list, noneOrEmpty, str, key, isSentinel, sentinelFree, isHeaderOrHelperRow, normaliseFpdCode } from './excelHelpers';
@@ -65,38 +65,6 @@ function resolvePredId(pred: string, currentPhase: string, needsPrefix: boolean,
   return pred;
 }
 
-/**
- * Purpose: Creates an inline PFMEA item when a BOP row has a Failure Mode column populated.
- *   Sentinel values (None, N/A, —) are treated as absent — no bogus PFMEA item is created.
- *
- * Downstream impact: populates ws.pfmea; Tab 5 PFMEA register counts.
- */
-function processInlinePfmea(
-  r: Row, op: string, fpd: Fpd, ws: Workspace,
-  cPfmea: CountEntry,
-  _ensureRes: (kind: ResourceKind, name: string, viaBop?: boolean) => { id: string },
-): void {
-  const fmRaw = str(col(r, 'Failure Mode'));
-  if (!fmRaw || isSentinel(fmRaw)) return;
-  const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
-  let p: PfmeaItem | undefined = ws.pfmea.find((x) => x.opId === op && x.failureMode.toLowerCase() === fmRaw.toLowerCase());
-  if (!p) {
-    p = { id: uid('pf'), fpdId: fpd.fpdId, opId: op, failureMode: fmRaw, effect: '', cause: '', controls: '', s: 1, o: 1, d: 1, recommendedAction: '', owner: '', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: [] };
-    ws.pfmea.push(p); cPfmea.added++;
-  } else cPfmea.updated++;
-  p.fpdId = fpd.fpdId;
-  const effect = str(col(r, 'Effect of Failure', 'Effect', 'Potential Effect')); if (effect && !isSentinel(effect)) p.effect = effect;
-  const cause = str(col(r, 'Cause of Failure', 'Cause', 'Potential Cause')); if (cause && !isSentinel(cause)) p.cause = cause;
-  const controls = str(col(r, 'Current Process Controls', 'Controls', 'Process Controls')); if (controls && !isSentinel(controls)) p.controls = controls;
-  const action = str(col(r, 'Recommended Corrective Action', 'Recommended Action')); if (action && !isSentinel(action)) p.recommendedAction = action;
-  if (str(col(r, 'Severity (1-10)', 'Severity', 'S'))) p.s = sod(col(r, 'Severity (1-10)', 'Severity', 'S'));
-  if (str(col(r, 'Occurrence (1-10)', 'Occurrence', 'O'))) p.o = sod(col(r, 'Occurrence (1-10)', 'Occurrence', 'O'));
-  if (str(col(r, 'Detection (1-10)', 'Detection', 'D'))) p.d = sod(col(r, 'Detection (1-10)', 'Detection', 'D'));
-  const cdReq = str(col(r, 'Control Doc Required')); if (cdReq) p.controlDocForced = ['y', 'yes', 'true', '1'].includes(cdReq.toLowerCase());
-  const phaseSt = str(col(r, 'Phase Status')); if (phaseSt) p.status = /clos/i.test(phaseSt) ? 'Closed' : /progress/i.test(phaseSt) ? 'In Progress' : 'Open';
-  const toolId = str(col(r, 'Assigned Tooling ID'));
-  if (toolId) { const res = ws.resources.find((x) => x.name.toLowerCase() === toolId.toLowerCase() || x.id === toolId); if (res && !p.resourceIds.includes(res.id)) p.resourceIds.push(res.id); }
-}
 
 type EnsureRes = (kind: ResourceKind, name: string, viaBop?: boolean) => { id: string };
 type EnsureFpd = (code: string, title?: string) => Fpd;
@@ -115,7 +83,7 @@ type FindCmp = (ref: string) => Component | undefined;
  */
 function processBopRow(
   r: Row, op: string, code: string, fpd: Fpd, ws: Workspace,
-  warnings: string[], c: CountEntry, cPfmea: CountEntry, cCmp: CountEntry,
+  warnings: string[], c: CountEntry, cCmp: CountEntry,
   flat: Map<string, BopRow>, lastDestZone: Map<string, string>,
   needsPrefix: boolean, opRewriteMap: Map<string, string>,
   findCmp: FindCmp, ensureRes: EnsureRes, cellByNumber: (v: unknown) => string,
@@ -170,7 +138,6 @@ function processBopRow(
   const rawGate = sentinelFree(col(r, 'Quality Gate Sign-off', 'Quality Gate', 'Hold Point'));
   const gateTitle = rawGate ? (/^(yes|true|hold)$/i.test(rawGate) ? 'Hold Point' : rawGate) : '';
   if (gateTitle) { const existing = ws.holdPoints.find((h) => h.opId === op && h.title.toLowerCase() === gateTitle.toLowerCase()); if (!existing) ws.holdPoints.push({ id: uid('hp'), fpdId: fpd.fpdId, opId: op, type: 'Hold', title: gateTitle, notes: '', status: 'Planned' }); }
-  processInlinePfmea(r, op, fpd, ws, cPfmea, ensureRes);
 }
 
 /**
@@ -192,7 +159,6 @@ export function processBopSheet(
 ): number {
   if (ws.cells.length === 0) ws.cells.push({ id: uid('cell'), number: 1, name: 'Main Assembly', crewPerShift: 2, notes: '' });
   const c = { label: 'BOP activities', added: 0, updated: 0 }; counts.push(c);
-  const cPfmea = { label: 'PFMEA items (via BOP)', added: 0, updated: 0 }; counts.push(cPfmea);
   const cCmp = counts.find((x) => x.label === 'Components') ?? { label: 'Components', added: 0, updated: 0 };
   const { needsPrefix, opRewriteMap, warningMessage } = detectDuplicateRouteCodes(bopRows);
   if (warningMessage) warnings.push(warningMessage);
@@ -209,7 +175,7 @@ export function processBopSheet(
     const op = resolveOpId(rawOp, code, needsPrefix, opRewriteMap);
     if (!op || !code) { if (op || code) warnings.push(`BOP row skipped — needs both FPD Code and Op # (got "${code}" / "${op}").`); continue; }
     const fpd = ensureFpd(code, fpdTitle);
-    processBopRow(r, op, code, fpd, ws, warnings, c, cPfmea, cCmp, flat, lastDestZone, needsPrefix, opRewriteMap, findCmp, ensureRes, cellByNumber);
+    processBopRow(r, op, code, fpd, ws, warnings, c, cCmp, flat, lastDestZone, needsPrefix, opRewriteMap, findCmp, ensureRes, cellByNumber);
   }
   return skippedRows;
 }

@@ -1,6 +1,6 @@
 // Workbook parsing and workspace import — parseWorkbook, buildImport.
 import { blankResource } from '../data/seed';
-import type { Component, Fpd, PfmeaItem, ResourceKind, Workspace } from '../types';
+import type { Component, Fpd, ResourceKind, Workspace } from '../types';
 import { RESOURCE_KINDS, uid } from '../types';
 import { num } from './format';
 import { type Row, type ExcelImportResult, type ParsedWorkbook, col, list, nOrNull, str, sheetToRows, scoreBopCandidate, scanHeaderRow, normaliseHeaderCell, BOP_CONTENT_SIGNALS } from './excelHelpers';
@@ -65,9 +65,9 @@ function processResourceRows(
   }
 }
 
-/** SHEET_KINDS regex table used inside parseWorkbook. */
+/** SHEET_KINDS regex table used inside parseWorkbook. PFMEA sheets are intentionally excluded — PFMEA data is never imported from Excel. */
 const SHEET_KINDS: [RegExp, string][] = [
-  [/pfmea|fmea|risk/i, 'pfmea'], [/fpd|document|registry/i, 'fpds'],
+  [/fpd|document|registry/i, 'fpds'],
   [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],
   [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],
   [/component|bom|part/i, 'components'], [/resource|equipment|crane|tool/i, 'resources'],
@@ -98,15 +98,24 @@ export async function parseWorkbook(file: File): Promise<ParsedWorkbook> {
       if (c.t === 'e' || (typeof c.v === 'string' && /^#(REF|N\/A|VALUE|DIV\/0|NAME|NULL|NUM)[!?]?/.test(c.v))) { errorCells.push(`${name}!${addr} (${c.w ?? c.v})`); delete sh[addr]; }
     }
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '', blankrows: false });
+    const bopScore = scoreBopCandidate(aoa);
+    // Content-first: ≥2 BOP header signals means this is a BOP sheet regardless of tab name.
+    // This ensures "Master BOP & PFMEA" is treated as BOP even though its name contains "PFMEA".
+    if (bopScore >= 200) {
+      bopCandidates.push({ name, score: bopScore, rows: sheetToRows(XLSX, sh) });
+      continue;
+    }
+    // Tab-name classification — PFMEA sheets are explicitly excluded.
     let kind = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
     if (!kind) {
       for (let i = 0; i < Math.min(30, aoa.length); i++) {
         const rowStr = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase()).join(' ');
         if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) { kind = 'bop'; break; }
+        if (rowStr.includes('fpd code') && rowStr.includes('title')) { kind = 'fpds'; break; }
       }
     }
     if (kind === 'bop') {
-      bopCandidates.push({ name, score: scoreBopCandidate(aoa), rows: sheetToRows(XLSX, sh) });
+      bopCandidates.push({ name, score: bopScore, rows: sheetToRows(XLSX, sh) });
     } else if (kind && !sheets[kind]) {
       sheets[kind] = sheetToRows(XLSX, sh);
     }
@@ -147,7 +156,8 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
   const S = parsed.sheets;
   if (mode === 'replace') { if (S.bop) ws.rows = []; if (S.fpds) ws.fpds = []; if (S.components && !S.bop) ws.components = []; if (S.pfmea) ws.pfmea = []; }
   const cellByNumber = (v: unknown) => { const s = str(v); const n = parseInt(s.replace(/\D+/g, ''), 10); return ws.cells.find((c) => c.number === n || c.id === s || c.name.toLowerCase() === s.toLowerCase())?.id ?? ''; };
-  const fpdByCode = (code: string) => ws.fpds.find((f) => f.fpdCode.toLowerCase() === code.toLowerCase());
+  const normFpdKey = (c: string) => c.replace(/^fpd-0*/i, '').toLowerCase();
+  const fpdByCode = (code: string) => ws.fpds.find((f) => f.fpdCode.toLowerCase() === code.toLowerCase() || normFpdKey(f.fpdCode) === normFpdKey(code));
   const ensureFpd = (code: string, title?: string): Fpd => {
     let f = fpdByCode(code);
     if (!f) { f = { fpdId: uid('fpd'), fpdCode: code, title: title ?? code, subAssemblyBomRef: '', assignedCellId: ws.cells[0]?.id ?? '', revision: 'A', active: true }; ws.fpds.push(f); }
@@ -185,18 +195,6 @@ export function buildImport(parsed: ParsedWorkbook, current: Workspace, mode: 'm
   };
   if (S.resources) processResourceRows(S.resources, ws, warnings, ensureRes, cellByNumber, cRes);
   if (S.bop) skippedRows = processBopSheet(S.bop, ws, warnings, counts, findCmp, ensureFpd, ensureRes, cellByNumber);
-  if (S.pfmea) {
-    const c = count('PFMEA items');
-    const sod = (v: unknown) => Math.min(10, Math.max(1, Math.round(num(v, 1))));
-    for (const r of S.pfmea) {
-      const fm = str(col(r, 'Failure Mode', 'Potential Failure Mode')); if (!fm) continue;
-      const op = str(col(r, 'Op #', 'Op', 'Process Step')); const code = str(col(r, 'FPD Code', 'FPD'));
-      let p: PfmeaItem | undefined = ws.pfmea.find((x) => x.opId === op && x.failureMode.toLowerCase() === fm.toLowerCase());
-      if (!p) { p = { id: uid('pf'), fpdId: '', opId: op, failureMode: fm, effect: '', cause: '', controls: '', s: 1, o: 1, d: 1, recommendedAction: '', owner: '', status: 'Open', controlDocForced: false, controlDocRef: '', resourceIds: [] }; ws.pfmea.push(p); c.added++; } else c.updated++;
-      const st = str(col(r, 'Status'));
-      Object.assign(p, { fpdId: code ? ensureFpd(code).fpdId : p.fpdId, effect: str(col(r, 'Effect', 'Potential Effect')) || p.effect, cause: str(col(r, 'Cause', 'Potential Cause')) || p.cause, controls: str(col(r, 'Controls', 'Current Controls')) || p.controls, s: sod(col(r, 'S', 'Severity')), o: sod(col(r, 'O', 'Occurrence')), d: sod(col(r, 'D', 'Detection')), recommendedAction: str(col(r, 'Recommended Action', 'Action')) || p.recommendedAction, owner: str(col(r, 'Owner')) || p.owner, status: /clos/i.test(st) ? 'Closed' : /progress/i.test(st) ? 'In Progress' : 'Open', controlDocRef: str(col(r, 'Control Doc Ref', 'Control Document', 'Control Plan Ref')) || p.controlDocRef, resourceIds: str(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling')) ? list(col(r, 'Assigned Resources', 'Tooling', 'Assigned Tooling')).map((n) => ws.resources.find((x) => x.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => !!x) : p.resourceIds });
-    }
-  }
   if (!Object.keys(S).length) warnings.push('No recognisable BOP sheets found. Expected a sheet whose first rows contain "Route Code", "Operation Phase Title" and "Phase #" — download the template for the exact column layout.');
   ws.meta.updatedAt = new Date().toISOString();
   return { ws, counts: counts.filter((c) => c.added + c.updated > 0 || c.label !== 'Resources'), warnings, sheetsRead: Object.keys(S), skippedRows };

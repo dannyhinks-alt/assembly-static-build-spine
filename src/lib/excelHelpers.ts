@@ -13,7 +13,7 @@ export const str = (v: unknown): string => (v == null ? '' : String(v).trim());
  *   inside header cells; without this step "Operation\nPhase Title" never matches the
  *   canonical "Operation Phase Title" signal.
  *
- * Downstream impact: drives scanHeaderRow, scoreBopCandidate, classifySheet and sheetToRows.
+ * Downstream impact: drives scanHeaderRow, scoreBopCandidate and sheetToRows.
  */
 export function normaliseHeaderCell(v: unknown): string {
   return String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -81,14 +81,6 @@ export interface ParsedWorkbook {
   bopFirstDataRow?: Record<string, unknown>;
 }
 
-const SHEET_KINDS: [RegExp, string][] = [
-  [/pfmea|fmea|risk/i, 'pfmea'],
-  [/fpd|document|registry/i, 'fpds'],
-  [/master.bop|combined.bop|bop.*pfmea|pfmea.*bop/i, 'bop'],
-  [/bop|bill.?of.?process|process|ktp|baseline|activit/i, 'bop'],
-  [/component|bom|part/i, 'components'],
-  [/resource|equipment|crane|tool/i, 'resources'],
-];
 
 /** Strong header signals that identify a row as the actual column-header row. */
 const STRONG_HEADERS = [
@@ -132,7 +124,7 @@ export function scanHeaderRow(aoa: unknown[][]): number {
  * Purpose: Scores a 2-D sheet array as a BOP candidate, counting canonical header
  *   signals and estimated data rows, so the best sheet is preferred over lookup tabs.
  *
- * Formula: headerScore = max BOP-header matches in top 15 rows; dataRows = rows past row 15.
+ * Formula: headerScore = max BOP-header matches in top 30 rows; dataRows = non-blank rows past the header.
  *
  * Downstream impact: drives BOP sheet selection in parseWorkbook when a workbook has
  *   multiple sheets (Sheet1, Sheet2, etc.).
@@ -182,41 +174,38 @@ export function sheetToRows(XLSX: XlsxUtils, sh: unknown): Row[] {
     });
 }
 
+
 /**
- * Purpose: Classify a workbook's named sheets into domain kinds (bop, fpds, etc.).
- *
- * Formula: regex match on sheet name; fall back to BOP_CONTENT_SIGNALS scan.
- *
- * Downstream impact: determines which buildImport sub-routines run.
- *
- * @returns kind string or undefined if unrecognised
+ * Canonical FPD titles for the reference programme phases 1–19.
+ * Gaps at 7, 11 and 13 are unused phases; they fall through to the "Phase N" fallback.
  */
-export function classifySheet(name: string, XLSX: XlsxUtils, sh: unknown): string | undefined {
-  const byName = SHEET_KINDS.find(([re]) => re.test(name))?.[1];
-  if (byName) return byName;
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sh, { header: 1, defval: '' });
-  for (let i = 0; i < Math.min(30, aoa.length); i++) {
-    const rowStr = (aoa[i] as unknown[]).map((v) => normaliseHeaderCell(v).toLowerCase()).join(' ');
-    if (BOP_CONTENT_SIGNALS.some((s) => rowStr.includes(s))) return 'bop';
-  }
-  return undefined;
-}
+const CANONICAL_FPD_TITLES: Record<string, string> = {
+  '1': 'Initial Power Module Preparations', '2': 'Prepare Assemblies',
+  '3': 'Assemble Unit Module', '4': 'Install Unit Module',
+  '5': 'Install Closure Head', '6': 'Install Surveillance Specimen Assembly',
+  '8': 'Install Transport Bolt Assembly', '9': 'Install Compression Tube',
+  '10': 'Install Lower CRDM & Hysteresis Testing', '12': 'Install Upper CRDM',
+  '14': 'Install CRDM Coolant Manifold', '15': 'Test CRDM Assembly',
+  '16': 'Prepare PMTP', '17': 'Prepare PM for PMTP Load',
+  '18': 'Load PM into PMTP', '19': 'Prepare PMTP for Dispatch',
+};
 
 /**
  * Purpose: Normalises a Phase # / FPD Code from a BOP workbook cell.
- *   Bare integers (e.g. 4 or "4") become "FPD-004" with display title "Phase 4",
- *   matching the workspace canonical FPD Code format.
+ *   Bare integers (1–19) are preserved as-is (code "4" not "FPD-004") and
+ *   resolved against the canonical programme title lookup before falling back
+ *   to "Phase N".  Non-numeric codes (e.g. "FPD-001") are returned unchanged.
  *
- * Formula: if numeric, zero-pad to 3 digits and prefix FPD-.
+ * Formula: if numeric, return code = s, title = CANONICAL_FPD_TITLES[s] ?? "Phase N".
  *
  * Downstream impact: drives FPD creation in processBopSheet and all BOP row fpdId
- *   assignments; ensures FPDs created from bare phase numbers merge correctly on
- *   subsequent imports.
+ *   assignments; fpdByCode in buildImport matches bare codes against existing
+ *   FPD-prefixed entries so imports merge correctly.
  */
 export function normaliseFpdCode(raw: unknown): { code: string; title: string } {
   const s = str(raw).trim();
   if (!s || isSentinel(raw)) return { code: '', title: '' };
-  if (/^\d+$/.test(s)) { const p = s.padStart(3, '0'); return { code: `FPD-${p}`, title: `Phase ${s}` }; }
+  if (/^\d+$/.test(s)) { return { code: s, title: CANONICAL_FPD_TITLES[s] ?? `Phase ${s}` }; }
   return { code: s, title: s };
 }
 
